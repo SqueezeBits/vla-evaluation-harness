@@ -4,6 +4,7 @@ server:
 
 docker:
   image: ghcr.io/worv-ai/vla-evaluation-harness/robomme:latest
+  gpus: "all"
   env:
     - "NVIDIA_DRIVER_CAPABILITIES=all"
   volumes:

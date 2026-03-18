@@ -22,17 +22,26 @@ RUN uv pip install --no-cache-dir "setuptools==80.9.0"
 WORKDIR /app
 RUN git clone https://github.com/YinpeiDai/ManiSkill.git /app/ManiSkill \
     && cd /app/ManiSkill && git checkout 07be6fbc66350ddca200abfb0a11b692f078f7fd \
-    && rm -rf .git
-RUN cd /app/ManiSkill && uv pip install --no-cache-dir -e .
+    && rm -rf .git \
+    && uv pip install --no-cache-dir -e .
 
 # ── RoboMME benchmark (public repo, pinned commit) ──────────────────────
 RUN git clone https://github.com/RoboMME/robomme_benchmark.git /app/robomme_benchmark \
     && cd /app/robomme_benchmark && git checkout f2b540e64034cf9afd0b51cf8ec491de09c74f58 \
-    && rm -rf .git
-RUN cd /app/robomme_benchmark && uv pip install --no-cache-dir -e .
+    && rm -rf .git \
+    && uv pip install --no-cache-dir -e .
 
 # ── Additional runtime deps (h5py imported by DemonstrationWrapper) ─────
 RUN uv pip install --no-cache-dir "opencv-python>=4.11.0.86" h5py imageio
+
+# ── Lavapipe (software Vulkan) fallback for NVIDIA open kernel module ──
+# The open kernel module (common on H100/A100 clusters) has incomplete
+# Vulkan support that causes SAPIEN rendering to hang.  Copy the lavapipe
+# ICD to a stable path so it survives host volume mounts that override
+# /usr/share/vulkan/icd.d at runtime.
+RUN mkdir -p /opt/lavapipe \
+    && cp /usr/share/vulkan/icd.d/lvp_icd.x86_64.json /opt/lavapipe/lvp_icd.json
+ENV ROBOMME_LAVAPIPE_ICD=/opt/lavapipe/lvp_icd.json
 
 # ── Install evaluation harness ──────────────────────────────────────────
 WORKDIR /workspace
