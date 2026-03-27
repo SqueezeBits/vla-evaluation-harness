@@ -102,6 +102,49 @@ class DockerConfig:
 
 
 @dataclass
+class TrajectoryConfig:
+    """Trajectory recording settings (LeRobot v2.1 format).
+
+    Recording is **off** by default.  Enable via ``--save-traj`` on the CLI
+    or ``enabled: true`` in the YAML ``trajectory`` section.
+
+    Attributes:
+        enabled: Whether to record trajectories.
+        output_dir: Root directory for the LeRobot dataset output.
+        fps: Frame rate for videos and timestamp spacing.
+        video_codec: FFmpeg encoder name (falls back to libx264 if unavailable).
+        robot_type: Optional robot identifier stored in dataset metadata.
+        image_keys: Camera names to record.  ``None`` records all cameras.
+        chunks_size: Number of episodes per chunk directory.
+    """
+
+    enabled: bool = False
+    output_dir: str = "./trajectories"
+    fps: int = 10
+    video_codec: str = "libsvtav1"
+    robot_type: str | None = None
+    image_keys: list[str] | None = None
+    chunks_size: int = 1000
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> TrajectoryConfig:
+        if not data:
+            return cls()
+        return cls(
+            enabled=data.get("enabled", False),
+            output_dir=data.get("output_dir", cls.output_dir),
+            fps=int(data.get("fps", cls.fps)),
+            video_codec=data.get("video_codec", cls.video_codec),
+            robot_type=data.get("robot_type"),
+            image_keys=data.get("image_keys"),
+            chunks_size=int(data.get("chunks_size", cls.chunks_size)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class EvalConfig:
     """Single evaluation entry in the ``benchmarks`` list.
 

@@ -60,6 +60,7 @@ class AsyncEpisodeRunner(EpisodeRunner):
         conn: Any,  # Connection
         *,
         max_steps: int | None = None,
+        trajectory_writer: Any = None,  # Optional TrajectoryWriter
     ) -> EpisodeResult:
         """Run a single real-time episode.
 
@@ -95,6 +96,14 @@ class AsyncEpisodeRunner(EpisodeRunner):
             clock.reset()
             await conn.send_observation(obs_dict)
 
+            task_description = task.get("name", str(task))
+            if trajectory_writer is not None:
+                try:
+                    trajectory_writer.start_episode(task_description=task_description)
+                except Exception:
+                    logger.warning("Trajectory start_episode failed, disabling for this episode", exc_info=True)
+                    trajectory_writer = None
+
             # By default, no waiting for first action: the step loop starts
             # immediately.  The model server computes concurrently; until it
             # responds, action_buffer.get() returns a zero/held action — just
@@ -115,6 +124,13 @@ class AsyncEpisodeRunner(EpisodeRunner):
                 step_start = clock.time()
 
                 action = action_buffer.get()
+
+                if trajectory_writer is not None:
+                    try:
+                        trajectory_writer.add_step(observation=obs_dict, action=action)
+                    except Exception:
+                        logger.warning("Trajectory add_step failed, disabling for this episode", exc_info=True)
+                        trajectory_writer = None
 
                 _t0 = _time.monotonic()
                 await benchmark.apply_action(action)
@@ -168,6 +184,14 @@ class AsyncEpisodeRunner(EpisodeRunner):
                 step_period * 1000,
                 self.hz,
             )
+
+        if trajectory_writer is not None:
+            try:
+                trajectory_writer.end_episode(
+                    metadata={"success": episode_result.get("success"), "steps": episode_result.get("steps")}
+                )
+            except Exception:
+                logger.warning("Trajectory end_episode failed", exc_info=True)
 
         await conn.end_episode(episode_result)
         return episode_result
