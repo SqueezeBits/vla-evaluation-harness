@@ -153,6 +153,82 @@ def _resolve_dev_src() -> Path:
     sys.exit(1)
 
 
+_FFMPEG_CACHE_DIR = Path.home() / ".cache" / "vla-eval" / "bin"
+
+# Static ffmpeg download URLs (John Van Sickle builds, musl-static, GPL)
+_FFMPEG_URLS: dict[str, str] = {
+    "x86_64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
+    "aarch64": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz",
+}
+
+
+def _ensure_ffmpeg() -> Path:
+    """Return path to a static ffmpeg binary, downloading if necessary.
+
+    The binary is cached at ``~/.cache/vla-eval/bin/ffmpeg`` so it only
+    downloads once.  It is bind-mounted into Docker containers that need
+    trajectory recording.
+    """
+    import platform
+    import shutil
+    import subprocess
+    import tarfile
+
+    # Check system ffmpeg first
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return Path(system_ffmpeg).resolve()
+
+    cached = _FFMPEG_CACHE_DIR / "ffmpeg"
+    if cached.exists() and os.access(cached, os.X_OK):
+        return cached
+
+    arch = platform.machine()
+    url = _FFMPEG_URLS.get(arch)
+    if url is None:
+        _stderr_console().print(
+            f"[red]ERROR: No static ffmpeg build available for {arch}. "
+            f"Install ffmpeg manually: sudo apt install ffmpeg[/red]"
+        )
+        sys.exit(1)
+
+    con = _stderr_console()
+    con.print(f"[yellow]Downloading static ffmpeg for {arch}...[/yellow]")
+
+    _FFMPEG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tar_path = _FFMPEG_CACHE_DIR / "ffmpeg.tar.xz"
+
+    try:
+        subprocess.run(
+            ["curl", "-fSL", "--progress-bar", "-o", str(tar_path), url],
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback to wget if curl is unavailable
+        try:
+            subprocess.run(["wget", "-q", "--show-progress", "-O", str(tar_path), url], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            _stderr_console().print("[red]ERROR: Failed to download ffmpeg. Install curl or wget.[/red]")
+            sys.exit(1)
+
+    # Extract just the ffmpeg binary from the tarball
+    with tarfile.open(tar_path, "r:xz") as tar:
+        for member in tar.getmembers():
+            if member.name.endswith("/ffmpeg") and member.isfile():
+                f = tar.extractfile(member)
+                if f is not None:
+                    cached.write_bytes(f.read())
+                    cached.chmod(0o755)
+                    break
+        else:
+            _stderr_console().print("[red]ERROR: ffmpeg binary not found in downloaded archive[/red]")
+            sys.exit(1)
+
+    tar_path.unlink(missing_ok=True)
+    con.print(f"[green]ffmpeg cached at {cached}[/green]")
+    return cached
+
+
 def _run_via_docker(
     config: dict[str, Any],
     *,
@@ -183,12 +259,24 @@ def _run_via_docker(
     results_dir = str(Path(config.get("output_dir", "./results")).resolve())
     Path(results_dir).mkdir(parents=True, exist_ok=True)
 
+    # Trajectory recording: resolve host paths before rewriting for Docker
+    traj_cfg = config.get("trajectory", {})
+    traj_enabled = traj_cfg.get("enabled", False) if isinstance(traj_cfg, dict) else False
+    traj_host_dir: str | None = None
+    ffmpeg_host_path: Path | None = None
+    if traj_enabled:
+        traj_host_dir = str(Path(traj_cfg.get("output_dir", "./trajectories")).resolve())
+        Path(traj_host_dir).mkdir(parents=True, exist_ok=True)
+        ffmpeg_host_path = _ensure_ffmpeg()
+
     # Rewrite config for Docker: output_dir must point to the container-side mount,
     # not the host absolute path which doesn't exist inside the container.
     import tempfile
 
     docker_config = dict(config)
     docker_config["output_dir"] = "/workspace/results"
+    if traj_enabled:
+        docker_config.setdefault("trajectory", {})["output_dir"] = "/workspace/trajectories"
     docker_config_fd, docker_config_path = tempfile.mkstemp(suffix=".yaml", prefix="vla-eval-docker-")
     try:
         with os.fdopen(docker_config_fd, "w") as f:
@@ -210,6 +298,13 @@ def _run_via_docker(
         "-v", f"{docker_config_path}:/tmp/eval_config.yaml:ro",
     ]
     # fmt: on
+
+    # Trajectory recording: mount output dir and ffmpeg binary
+    if traj_enabled:
+        assert traj_host_dir is not None and ffmpeg_host_path is not None
+        cmd.extend(["-v", f"{traj_host_dir}:/workspace/trajectories"])
+        cmd.extend(["-v", f"{ffmpeg_host_path}:/usr/local/bin/ffmpeg:ro"])
+        logger.info("Trajectory recording: %s -> /workspace/trajectories", traj_host_dir)
 
     # Dev mode: mount host src/ into container (requires editable install in image)
     if dev:
@@ -276,6 +371,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         if shard_id < 0 or shard_id >= num_shards:
             _stderr_console().print(f"[red]ERROR: --shard-id must be in [0, {num_shards})[/red]")
             sys.exit(1)
+
+    # CLI override: enable trajectory recording
+    if getattr(args, "save_traj", False):
+        config.setdefault("trajectory", {})["enabled"] = True
 
     # CLI overrides for docker resource allocation
     cli_gpus = getattr(args, "gpus", None)
@@ -775,6 +874,9 @@ execution flow:
     )
     run_parser.add_argument(
         "--dev", action="store_true", help="Mount local src/ into the container (skip image rebuild on code changes)"
+    )
+    run_parser.add_argument(
+        "--save-traj", action="store_true", help="Record trajectories in LeRobot format (overrides config)"
     )
     run_parser.add_argument("--verbose", "-v", action="store_true")
     run_parser.set_defaults(func=cmd_run)

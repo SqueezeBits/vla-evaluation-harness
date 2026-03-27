@@ -13,7 +13,7 @@ from typing import Any, cast
 
 import websockets
 
-from vla_eval.config import EvalConfig, ServerConfig
+from vla_eval.config import EvalConfig, ServerConfig, TrajectoryConfig
 from vla_eval.connection import Connection
 from vla_eval.registry import resolve_import_string
 from vla_eval.results.collector import EpisodeResult, ResultCollector
@@ -59,6 +59,7 @@ class Orchestrator:
     ) -> None:
         self.config = config
         self._server_cfg = ServerConfig.from_dict(config.get("server"))
+        self._traj_cfg = TrajectoryConfig.from_dict(config.get("trajectory"))
         self.shard_id = shard_id
         self.num_shards = num_shards
 
@@ -131,6 +132,25 @@ class Orchestrator:
         else:
             runner = SyncEpisodeRunner()
 
+        # Create trajectory writer if configured
+        trajectory_writer = None
+        if self._traj_cfg.enabled:
+            from vla_eval.results.trajectory_writer import TrajectoryWriter
+
+            safe_name = re.sub(r"[^\w\-.]", "_", name)
+            traj_dir = Path(self._traj_cfg.output_dir) / safe_name
+            if self.num_shards is not None and self.shard_id is not None:
+                traj_dir = traj_dir / f"shard{self.shard_id}of{self.num_shards}"
+            trajectory_writer = TrajectoryWriter(
+                output_dir=traj_dir,
+                fps=self._traj_cfg.fps,
+                chunks_size=self._traj_cfg.chunks_size,
+                video_codec=self._traj_cfg.video_codec,
+                robot_type=self._traj_cfg.robot_type,
+                image_keys=self._traj_cfg.image_keys,
+            )
+            logger.info("Trajectory recording enabled → %s", traj_dir)
+
         # Get tasks
         tasks = benchmark.get_tasks()
         if cfg.tasks:
@@ -164,8 +184,11 @@ class Orchestrator:
                     if cfg.throughput_mode and max_ep is not None:
                         episode_idx = ep % max_ep
                     task = {**task, "episode_idx": episode_idx}
-                    raw = await runner.run_episode(benchmark, task, conn, max_steps=max_steps)
-                    raw["episode_id"] = ep
+                    raw = await runner.run_episode(
+                        benchmark, task, conn, max_steps=max_steps, trajectory_writer=trajectory_writer
+                    )
+                    raw["task"] = task_name
+                    raw["episode_id"] = f"{task_name}_ep{ep}"
                     ep_result = cast(EpisodeResult, raw)
                     collector.record(task_name, ep_result)
                     status = "SUCCESS" if ep_result.get("metrics", {}).get("success") else "FAIL"
@@ -262,6 +285,12 @@ class Orchestrator:
         finally:
             benchmark.cleanup()
             await conn.close()
+            if trajectory_writer is not None:
+                try:
+                    trajectory_writer.close()
+                    logger.info("Trajectory dataset finalized.")
+                except Exception:
+                    logger.warning("Failed to finalize trajectory dataset", exc_info=True)
 
         return self._save_results(collector, cfg, partial=False, server_info=conn.server_info)
 

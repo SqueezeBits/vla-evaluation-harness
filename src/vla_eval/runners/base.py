@@ -20,5 +20,6 @@ class EpisodeRunner(ABC):
         conn: Any,  # Connection
         *,
         max_steps: int | None = None,
+        trajectory_writer: Any = None,  # Optional TrajectoryWriter
     ) -> EpisodeResult:
         """Run a single episode and return the result."""
