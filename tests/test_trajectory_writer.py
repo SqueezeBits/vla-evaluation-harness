@@ -275,6 +275,61 @@ def test_chunk_boundary(output_dir):
     assert (output_dir / "data" / "chunk-001" / "episode_000002.parquet").exists()
 
 
+# -- JSON serializability ---------------------------------------------------
+
+
+def _check_json_native(obj, path="root"):
+    """Recursively assert all values are native Python types (no numpy)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            assert isinstance(k, str), f"Non-string key at {path}: {type(k)}"
+            _check_json_native(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            _check_json_native(v, f"{path}[{i}]")
+    else:
+        assert isinstance(obj, (str, int, float, bool, type(None))), (
+            f"Non-JSON-native type at {path}: {type(obj).__name__} = {obj!r}"
+        )
+
+
+def test_all_json_output_is_natively_serializable(output_dir):
+    """All JSON/JSONL files must contain only native Python types (no numpy).
+
+    This includes camera info in info.json (whose shape values originate from
+    numpy ndarray.shape) and user-supplied metadata that may contain numpy scalars.
+    """
+    with TrajectoryWriter(output_dir, fps=10, robot_type="panda") as writer:
+        # Manually register camera info to exercise the video-feature branch in info.json
+        # without requiring ffmpeg. Values use numpy ints to mimic ndarray.shape.
+        writer._camera_info["agentview"] = {"height": np.int64(64), "width": np.int64(64), "channels": np.int64(3)}
+
+        for i in range(2):
+            writer.start_episode(f"task {i}")
+            for _ in range(3):
+                writer.add_step(_make_obs(cameras={}, state_dim=7), _make_action(action_dim=7))
+            writer.end_episode(metadata={"success": True, "reward": np.float32(1.0)})
+
+    # Check info.json
+    info = json.loads((output_dir / "meta" / "info.json").read_text())
+    _check_json_native(info, "info.json")
+
+    # Check episodes.jsonl
+    for line in (output_dir / "meta" / "episodes.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        _check_json_native(record, "episodes.jsonl")
+
+    # Check tasks.jsonl
+    for line in (output_dir / "meta" / "tasks.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        _check_json_native(record, "tasks.jsonl")
+
+    # Check episodes_stats.jsonl
+    for line in (output_dir / "meta" / "episodes_stats.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        _check_json_native(record, "episodes_stats.jsonl")
+
+
 # -- Config tests ----------------------------------------------------------
 
 

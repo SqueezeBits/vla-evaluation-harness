@@ -188,7 +188,10 @@ class AsyncEpisodeRunner(EpisodeRunner):
         if trajectory_writer is not None:
             try:
                 trajectory_writer.end_episode(
-                    metadata={"success": episode_result.get("success"), "steps": episode_result.get("steps")}
+                    metadata={
+                        "success": episode_result.get("metrics", {}).get("success"),
+                        "steps": episode_result.get("steps"),
+                    }
                 )
             except Exception:
                 logger.warning("Trajectory end_episode failed", exc_info=True)
