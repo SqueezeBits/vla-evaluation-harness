@@ -116,6 +116,7 @@ class TrajectoryConfig:
         robot_type: Optional robot identifier stored in dataset metadata.
         image_keys: Camera names to record.  ``None`` records all cameras.
         chunks_size: Number of episodes per chunk directory.
+        split: Dataset split name (e.g. ``"eval"``, ``"train"``).
     """
 
     enabled: bool = False
@@ -125,6 +126,7 @@ class TrajectoryConfig:
     robot_type: str | None = None
     image_keys: list[str] | None = None
     chunks_size: int = 1000
+    split: str = "eval"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> TrajectoryConfig:
@@ -138,6 +140,7 @@ class TrajectoryConfig:
             robot_type=data.get("robot_type"),
             image_keys=data.get("image_keys"),
             chunks_size=int(data.get("chunks_size", cls.chunks_size)),
+            split=data.get("split", cls.split),
         )
 
     def to_dict(self) -> dict[str, Any]:
