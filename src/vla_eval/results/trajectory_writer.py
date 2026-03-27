@@ -39,8 +39,8 @@ _DEFAULT_PIX_FMT = "yuv420p"
 
 
 def _codec_name_for_metadata(codec: str) -> str:
-    """Map ffmpeg encoder name to the short codec name stored in metadata."""
-    return {"libsvtav1": "av1", "libx264": "h264", "libx265": "h265"}.get(codec, codec)
+    """Return the codec name as stored in LeRobot metadata (encoder name, not short alias)."""
+    return codec
 
 
 def _check_ffmpeg() -> bool:
@@ -170,6 +170,7 @@ class TrajectoryWriter:
         robot_type: str | None = None,
         image_keys: list[str] | None = None,
         state_key: str = "states",
+        split: str = "eval",
     ) -> None:
         self._root = Path(output_dir)
         self._fps = fps
@@ -179,6 +180,7 @@ class TrajectoryWriter:
         self._robot_type = robot_type
         self._image_keys = image_keys
         self._state_key = state_key
+        self._split = split
 
         self._root.mkdir(parents=True, exist_ok=True)
 
@@ -261,7 +263,7 @@ class TrajectoryWriter:
             # Record camera info on first frame
             if cam_name not in self._camera_info:
                 h, w, c = frame.shape
-                self._camera_info[cam_name] = {"height": h, "width": w, "channels": c}
+                self._camera_info[cam_name] = {"height": int(h), "width": int(w), "channels": int(c)}
 
         # --- Action ---
         act = np.asarray(action["actions"], dtype=np.float32)
@@ -272,7 +274,7 @@ class TrajectoryWriter:
         else:
             buf.actions.append(act)
             if self._action_dim is None:
-                self._action_dim = act.shape[0]
+                self._action_dim = int(act.shape[0])
 
         # --- State ---
         state = observation.get(self._state_key)
@@ -282,7 +284,7 @@ class TrajectoryWriter:
             state = np.asarray(state, dtype=np.float32)
             buf.states.append(state)
             if self._state_dim is None:
-                self._state_dim = state.shape[0]
+                self._state_dim = int(state.shape[0])
         else:
             buf.states.append(None)
 
@@ -332,14 +334,16 @@ class TrajectoryWriter:
         self._write_parquet(buf, chunk_idx, n_frames)
 
         # --- Accumulate episode metadata ---
-        self._episode_records.append(
-            {
-                "episode_index": buf.episode_index,
-                "tasks": [buf.task_description],
-                "length": n_frames,
-                **({"metadata": buf.metadata} if buf.metadata else {}),
-            }
-        )
+        episode_record: dict[str, Any] = {
+            "episode_index": buf.episode_index,
+            "tasks": [buf.task_description],
+            "length": n_frames,
+        }
+        # Promote metadata fields to top-level (matches LeRobot convention)
+        if buf.metadata:
+            for k, v in buf.metadata.items():
+                episode_record[k] = v
+        self._episode_records.append(episode_record)
 
         # --- Compute and store per-episode stats ---
         self._episode_stats.append(self._compute_episode_stats(buf, n_frames))
@@ -383,10 +387,12 @@ class TrajectoryWriter:
         parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
         columns: dict[str, Any] = {}
+        fields: list[Any] = []
 
-        # Actions
+        # Actions — variable-size list<float> to match LeRobot convention
         actions = np.stack(buf.actions[:n_frames])
         columns["action"] = [row.tolist() for row in actions]
+        fields.append(pa.field("action", pa.list_(pa.float32())))
 
         # States
         has_states = any(s is not None for s in buf.states[:n_frames])
@@ -400,26 +406,26 @@ class TrajectoryWriter:
                     state_arrays.append(np.zeros(dim, dtype=np.float32))
             states = np.stack(state_arrays)
             columns["observation.state"] = [row.tolist() for row in states]
+            fields.append(pa.field("observation.state", pa.list_(pa.float32())))
 
-        # Mandatory index columns
-        columns["timestamp"] = [i / self._fps for i in range(n_frames)]
+        # Mandatory index columns — timestamp is float64 to match reference
+        columns["timestamp"] = [float(i / self._fps) for i in range(n_frames)]
         columns["frame_index"] = list(range(n_frames))
         columns["episode_index"] = [buf.episode_index] * n_frames
         columns["index"] = list(range(self._global_frame_index, self._global_frame_index + n_frames))
         columns["task_index"] = [buf.task_index] * n_frames
 
-        # Build Arrow schema
-        fields = []
-        action_dim = actions.shape[1]
-        fields.append(pa.field("action", pa.list_(pa.float32(), action_dim)))
-        if has_states:
-            state_dim = states.shape[1]
-            fields.append(pa.field("observation.state", pa.list_(pa.float32(), state_dim)))
-        fields.append(pa.field("timestamp", pa.float32()))
+        fields.append(pa.field("timestamp", pa.float64()))
         fields.append(pa.field("frame_index", pa.int64()))
         fields.append(pa.field("episode_index", pa.int64()))
         fields.append(pa.field("index", pa.int64()))
         fields.append(pa.field("task_index", pa.int64()))
+
+        # Video presence columns — bool True for each frame (matches LeRobot convention)
+        for cam_name in buf.image_buffers:
+            video_key = f"observation.images.{cam_name}"
+            columns[video_key] = [True] * n_frames
+            fields.append(pa.field(video_key, pa.bool_()))
 
         schema = pa.schema(fields)
         table = pa.table(columns, schema=schema)
@@ -476,22 +482,22 @@ class TrajectoryWriter:
             features[video_key] = {
                 "dtype": "video",
                 "shape": [cam["height"], cam["width"], cam["channels"]],
-                "names": ["height", "width", "channels"],
+                "names": ["height", "width", "rgb"],
                 "info": {
-                    "video.fps": float(self._fps),
                     "video.height": cam["height"],
                     "video.width": cam["width"],
-                    "video.channels": cam["channels"],
                     "video.codec": codec_meta,
                     "video.pix_fmt": _DEFAULT_PIX_FMT,
                     "video.is_depth_map": False,
+                    "video.fps": self._fps,
+                    "video.channels": cam["channels"],
                     "has_audio": False,
                 },
             }
 
         # Mandatory index features
         for name, dtype in [
-            ("timestamp", "float32"),
+            ("timestamp", "float64"),
             ("frame_index", "int64"),
             ("episode_index", "int64"),
             ("index", "int64"),
@@ -509,14 +515,14 @@ class TrajectoryWriter:
             "total_chunks": total_chunks,
             "chunks_size": self._chunks_size,
             "fps": self._fps,
-            "splits": {"train": f"0:{total_episodes}"},
+            "splits": {self._split: f"0:{total_episodes}"},
             "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
             "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
             "features": features,
         }
 
         with open(meta_dir / "info.json", "w") as f:
-            json.dump(info, f, indent=2)
+            json.dump(info, f, indent=2, default=_json_default)
 
     @staticmethod
     def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:

@@ -148,6 +148,7 @@ class Orchestrator:
                 video_codec=self._traj_cfg.video_codec,
                 robot_type=self._traj_cfg.robot_type,
                 image_keys=self._traj_cfg.image_keys,
+                split=self._traj_cfg.split,
             )
             logger.info("Trajectory recording enabled → %s", traj_dir)
 
