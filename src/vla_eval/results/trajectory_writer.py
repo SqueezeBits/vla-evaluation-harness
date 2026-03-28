@@ -351,11 +351,21 @@ class TrajectoryWriter:
         self._global_frame_index += n_frames
         self._current = None
 
+        # Write metadata incrementally so partial runs are usable
+        self._flush_meta()
+
     def close(self) -> None:
-        """Write all metadata files (info.json, episodes.jsonl, tasks.jsonl, episodes_stats.jsonl)."""
+        """Finalize metadata files.  Safe to call even after incremental writes."""
         if self._current is not None:
             logger.warning("Closing with an unfinished episode; discarding episode %d.", self._current.episode_index)
             self._current = None
+
+        self._flush_meta()
+
+    def _flush_meta(self) -> None:
+        """Write (or overwrite) all metadata files with current state."""
+        if not self._episode_records:
+            return
 
         meta_dir = self._root / "meta"
         meta_dir.mkdir(parents=True, exist_ok=True)
@@ -545,6 +555,8 @@ def _array_stats(arr: np.ndarray) -> dict[str, list[float]]:
 
 def _json_default(obj: object) -> Any:
     """JSON serializer fallback for numpy types."""
+    if isinstance(obj, np.bool_):
+        return bool(obj)
     if isinstance(obj, np.integer):
         return int(obj)
     if isinstance(obj, np.floating):

@@ -81,6 +81,8 @@ class SyncEpisodeRunner(EpisodeRunner):
                 )
             except Exception:
                 logger.warning("Trajectory end_episode failed", exc_info=True)
+                # Reset stale episode state so the next episode can start cleanly
+                trajectory_writer._current = None
 
         await conn.end_episode(episode_result)
         return episode_result
