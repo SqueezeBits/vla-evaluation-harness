@@ -259,24 +259,20 @@ def _run_via_docker(
     results_dir = str(Path(config.get("output_dir", "./results")).resolve())
     Path(results_dir).mkdir(parents=True, exist_ok=True)
 
-    # Trajectory recording: resolve host paths before rewriting for Docker
+    # Trajectory recording: ensure ffmpeg is available for video encoding
     traj_cfg = config.get("trajectory", {})
     traj_enabled = traj_cfg.get("enabled", False) if isinstance(traj_cfg, dict) else False
-    traj_host_dir: str | None = None
     ffmpeg_host_path: Path | None = None
     if traj_enabled:
-        traj_host_dir = str(Path(traj_cfg.get("output_dir", "./trajectories")).resolve())
-        Path(traj_host_dir).mkdir(parents=True, exist_ok=True)
         ffmpeg_host_path = _ensure_ffmpeg()
 
     # Rewrite config for Docker: output_dir must point to the container-side mount,
     # not the host absolute path which doesn't exist inside the container.
+    # Trajectory data is written under the same output_dir as results.
     import tempfile
 
     docker_config = dict(config)
     docker_config["output_dir"] = "/workspace/results"
-    if traj_enabled:
-        docker_config.setdefault("trajectory", {})["output_dir"] = "/workspace/trajectories"
     docker_config_fd, docker_config_path = tempfile.mkstemp(suffix=".yaml", prefix="vla-eval-docker-")
     try:
         with os.fdopen(docker_config_fd, "w") as f:
@@ -299,12 +295,10 @@ def _run_via_docker(
     ]
     # fmt: on
 
-    # Trajectory recording: mount output dir and ffmpeg binary
+    # Trajectory recording: mount ffmpeg binary (trajectory data goes under output_dir)
     if traj_enabled:
-        assert traj_host_dir is not None and ffmpeg_host_path is not None
-        cmd.extend(["-v", f"{traj_host_dir}:/workspace/trajectories"])
+        assert ffmpeg_host_path is not None
         cmd.extend(["-v", f"{ffmpeg_host_path}:/usr/local/bin/ffmpeg:ro"])
-        logger.info("Trajectory recording: %s -> /workspace/trajectories", traj_host_dir)
 
     # Dev mode: mount host src/ into container (requires editable install in image)
     if dev:
@@ -327,9 +321,46 @@ def _run_via_docker(
     else:
         cmd.extend(gpu_docker_flag(docker_cfg.gpus))
 
-    cmd.extend([docker_cfg.image, "run", "--no-docker", "--config", "/tmp/eval_config.yaml"])
+    # Build the inner vla-eval command
+    inner_cmd = "vla-eval run --no-docker --config /tmp/eval_config.yaml"
     if shard_id is not None:
-        cmd.extend(["--shard-id", str(shard_id), "--num-shards", str(num_shards)])
+        inner_cmd += f" --shard-id {shard_id} --num-shards {num_shards}"
+
+    # When trajectory recording is enabled, install pyarrow inside the container
+    # (prebuilt benchmark images don't include it).  We inject a pip install into
+    # the conda env used by the image's entrypoint, then run the evaluation.
+    if traj_enabled:
+        # Detect the conda env name from the image's entrypoint (e.g. "conda run -n libero ...")
+        import subprocess as _sp
+
+        inspect = _sp.run(
+            [docker, "inspect", docker_cfg.image, "--format", "{{json .Config.Entrypoint}}"],
+            capture_output=True,
+            text=True,
+        )
+        conda_env = "base"
+        if inspect.returncode == 0:
+            import json as _json
+
+            try:
+                ep = _json.loads(inspect.stdout.strip())
+                if isinstance(ep, list) and "-n" in ep:
+                    conda_env = ep[ep.index("-n") + 1]
+            except (ValueError, IndexError):
+                pass
+        install_cmd = f"conda run --no-capture-output -n {conda_env} pip install -q pyarrow"
+        run_cmd = f"conda run --no-capture-output -n {conda_env} {inner_cmd}"
+        cmd.extend(
+            [
+                "--entrypoint",
+                "/bin/bash",
+                docker_cfg.image,
+                "-c",
+                f"{install_cmd} && {run_cmd}",
+            ]
+        )
+    else:
+        cmd.extend([docker_cfg.image] + inner_cmd.split())
 
     logger.info("Running via Docker: %s", " ".join(cmd))
     try:
@@ -372,9 +403,17 @@ def cmd_run(args: argparse.Namespace) -> None:
             _stderr_console().print(f"[red]ERROR: --shard-id must be in [0, {num_shards})[/red]")
             sys.exit(1)
 
+    # CLI override: output directory
+    cli_output_dir = getattr(args, "output_dir", None)
+    if cli_output_dir is not None:
+        config["output_dir"] = cli_output_dir
+
     # CLI override: enable trajectory recording
     if getattr(args, "save_traj", False):
         config.setdefault("trajectory", {})["enabled"] = True
+    cli_traj_name = getattr(args, "traj_name", None)
+    if cli_traj_name is not None:
+        config.setdefault("trajectory", {})["traj_name"] = cli_traj_name
 
     # CLI overrides for docker resource allocation
     cli_gpus = getattr(args, "gpus", None)
@@ -878,6 +917,13 @@ execution flow:
     run_parser.add_argument(
         "--save-traj", action="store_true", help="Record trajectories in LeRobot format (overrides config)"
     )
+    run_parser.add_argument(
+        "--traj-name",
+        default=None,
+        help="Trajectory subdirectory name (e.g. 'MyModel_20260328_120000'). "
+        "Shared across shards for consistent output paths.",
+    )
+    run_parser.add_argument("--output-dir", "-o", default=None, help="Override output_dir from config")
     run_parser.add_argument("--verbose", "-v", action="store_true")
     run_parser.set_defaults(func=cmd_run)
 
