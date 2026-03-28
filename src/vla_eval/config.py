@@ -108,9 +108,15 @@ class TrajectoryConfig:
     Recording is **off** by default.  Enable via ``--save-traj`` on the CLI
     or ``enabled: true`` in the YAML ``trajectory`` section.
 
+    Output directory follows the convention::
+
+        <output_dir>/<benchmark_name>/<name>_<YYYYMMDD_HHMMSS>/
+            data/  videos/  meta/
+
     Attributes:
         enabled: Whether to record trajectories.
-        output_dir: Root directory for the LeRobot dataset output.
+        name: Model/run identifier for the subdirectory name.
+            Falls back to the model server class name from HELLO handshake.
         fps: Frame rate for videos and timestamp spacing.
         video_codec: FFmpeg encoder name (falls back to libx264 if unavailable).
         robot_type: Optional robot identifier stored in dataset metadata.
@@ -120,7 +126,8 @@ class TrajectoryConfig:
     """
 
     enabled: bool = False
-    output_dir: str = "./trajectories"
+    name: str | None = None
+    traj_name: str | None = None
     fps: int = 10
     video_codec: str = "libsvtav1"
     robot_type: str | None = None
@@ -134,7 +141,8 @@ class TrajectoryConfig:
             return cls()
         return cls(
             enabled=data.get("enabled", False),
-            output_dir=data.get("output_dir", cls.output_dir),
+            name=data.get("name"),
+            traj_name=data.get("traj_name"),
             fps=int(data.get("fps", cls.fps)),
             video_codec=data.get("video_codec", cls.video_codec),
             robot_type=data.get("robot_type"),
