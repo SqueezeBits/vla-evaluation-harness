@@ -13,6 +13,10 @@ Options:
   -o <output>       Output file for merged results (default: results/<config_name>.json)
   --no-docker       Run benchmark on host instead of inside Docker
   -h                Show this help
+
+Extra arguments after -- are passed through to each 'vla-eval run' invocation.
+Example:
+  $(basename "$0") -c configs/libero_10.yaml -n 4 -- --gpus 4 --save-traj --server-url ws://0.0.0.0:8001
 EOF
   exit "${1:-0}"
 }
@@ -32,6 +36,23 @@ for arg in "$@"; do
 done
 set -- ${args[@]+"${args[@]}"}
 
+# Split args at -- : before goes to getopts, after goes to vla-eval run
+pre_args=()
+found_sep=false
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    found_sep=true
+    continue
+  fi
+  if $found_sep; then
+    EXTRA_ARGS+=("$arg")
+  else
+    pre_args+=("$arg")
+  fi
+done
+
+# Parse our own flags from pre_args
+set -- "${pre_args[@]+"${pre_args[@]}"}"
 while getopts "c:n:o:h" opt; do
   case "$opt" in
     c) CONFIG="$OPTARG" ;;
@@ -103,6 +124,20 @@ if [[ -n "$existing" ]]; then
   echo "Error: $existing" >&2
   echo "Remove existing results or use a different output_dir." >&2
   exit 1
+fi
+
+# If --save-traj is in extra args but --traj-name is not, generate a shared
+# traj-name so all shards write to the same trajectory directory.
+has_save_traj=false
+has_traj_name=false
+for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+  case "$arg" in
+    --save-traj) has_save_traj=true ;;
+    --traj-name) has_traj_name=true ;;
+  esac
+done
+if $has_save_traj && ! $has_traj_name; then
+  EXTRA_ARGS+=("--traj-name" "$(date -u +%Y%m%d_%H%M%S)")
 fi
 
 echo "Launching ${NUM_SHARDS} shards..."
