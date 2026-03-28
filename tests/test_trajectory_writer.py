@@ -341,21 +341,21 @@ def test_trajectory_config_default():
 
 def test_trajectory_config_present_defaults_disabled():
     """Presence of trajectory section alone does not enable recording."""
-    cfg = TrajectoryConfig.from_dict({"output_dir": "/tmp/traj"})
+    cfg = TrajectoryConfig.from_dict({"name": "my_model"})
     assert cfg.enabled is False
-    assert cfg.output_dir == "/tmp/traj"
+    assert cfg.name == "my_model"
     assert cfg.fps == 10
 
 
 def test_trajectory_config_explicit_enable():
     """Setting enabled: true enables recording."""
-    cfg = TrajectoryConfig.from_dict({"enabled": True, "output_dir": "/tmp/traj"})
+    cfg = TrajectoryConfig.from_dict({"enabled": True, "name": "my_model"})
     assert cfg.enabled is True
 
 
 def test_trajectory_config_explicit_disable():
     """Setting enabled: false disables even when section is present."""
-    cfg = TrajectoryConfig.from_dict({"enabled": False, "output_dir": "/tmp/traj"})
+    cfg = TrajectoryConfig.from_dict({"enabled": False, "name": "my_model"})
     assert cfg.enabled is False
 
 
@@ -363,7 +363,7 @@ def test_trajectory_config_all_fields():
     """All config fields are parsed correctly."""
     cfg = TrajectoryConfig.from_dict(
         {
-            "output_dir": "/data/out",
+            "name": "CogACT-Base",
             "fps": 30,
             "video_codec": "libx264",
             "robot_type": "panda",
@@ -371,6 +371,7 @@ def test_trajectory_config_all_fields():
             "chunks_size": 500,
         }
     )
+    assert cfg.name == "CogACT-Base"
     assert cfg.fps == 30
     assert cfg.video_codec == "libx264"
     assert cfg.robot_type == "panda"

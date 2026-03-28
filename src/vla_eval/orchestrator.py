@@ -135,10 +135,22 @@ class Orchestrator:
         # Create trajectory writer if configured
         trajectory_writer = None
         if self._traj_cfg.enabled:
+            from datetime import datetime, timezone
+
             from vla_eval.results.trajectory_writer import TrajectoryWriter
 
-            safe_name = re.sub(r"[^\w\-.]", "_", name)
-            traj_dir = Path(self._traj_cfg.output_dir) / safe_name
+            # Directory: <output_dir>/<benchmark_name>/<traj_name>/
+            # traj_name can be set via --traj-name CLI arg (shared across shards),
+            # or auto-generated as <model_name>_<YYYYMMDD_HHMMSS>.
+            output_dir = Path(self.config.get("output_dir", "./results"))
+            safe_bench = re.sub(r"[^\w\-.]", "_", name)
+            if self._traj_cfg.traj_name:
+                traj_subdir = self._traj_cfg.traj_name
+            else:
+                model_name = self._traj_cfg.name or conn.server_info.get("model_server", "unknown")
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                traj_subdir = f"{model_name}_{timestamp}"
+            traj_dir = output_dir / safe_bench / traj_subdir
             if self.num_shards is not None and self.shard_id is not None:
                 traj_dir = traj_dir / f"shard{self.shard_id}of{self.num_shards}"
             trajectory_writer = TrajectoryWriter(
