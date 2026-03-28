@@ -195,6 +195,7 @@ class StarVLAModelServer(PredictModelServer):
             "Qwen2.5-VL-7B-Instruct": "Qwen/Qwen2.5-VL-7B-Instruct",
             "Qwen2.5-VL-3B-Action": "starVLA/Qwen2.5-VL-3B-Instruct-Action",
             "Qwen2.5-VL-3B-Instruct-Action": "starVLA/Qwen2.5-VL-3B-Instruct-Action",
+            "Qwen3-VL-2B-Instruct": "Qwen/Qwen3-VL-2B-Instruct",
             "Qwen3-VL-4B-Instruct": "Qwen/Qwen3-VL-4B-Instruct",
         }
 
