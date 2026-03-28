@@ -195,6 +195,7 @@ class AsyncEpisodeRunner(EpisodeRunner):
                 )
             except Exception:
                 logger.warning("Trajectory end_episode failed", exc_info=True)
+                trajectory_writer._current = None
 
         await conn.end_episode(episode_result)
         return episode_result
