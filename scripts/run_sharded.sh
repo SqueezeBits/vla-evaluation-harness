@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") -c <config> [-n <num_shards>] [-o <output>]
+Usage: $(basename "$0") -c <config> [-n <num_shards>] [-o <output>] [-- <extra vla-eval run args>]
 
 Run a benchmark in parallel shards and merge results.
 
@@ -12,6 +12,10 @@ Options:
   -n <num_shards>   Number of shards (default: 50)
   -o <output>       Output file for merged results (default: results/<config_name>.json)
   -h                Show this help
+
+Extra arguments after -- are passed through to each 'vla-eval run' invocation.
+Example:
+  $(basename "$0") -c configs/libero_10.yaml -n 4 -- --gpus 4 --save-traj --server-url ws://0.0.0.0:8001
 EOF
   exit "${1:-0}"
 }
@@ -19,7 +23,25 @@ EOF
 CONFIG=""
 NUM_SHARDS=50
 OUTPUT=""
+EXTRA_ARGS=()
 
+# Split args at -- : before goes to getopts, after goes to vla-eval run
+pre_args=()
+found_sep=false
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    found_sep=true
+    continue
+  fi
+  if $found_sep; then
+    EXTRA_ARGS+=("$arg")
+  else
+    pre_args+=("$arg")
+  fi
+done
+
+# Parse our own flags from pre_args
+set -- "${pre_args[@]+"${pre_args[@]}"}"
 while getopts "c:n:o:h" opt; do
   case "$opt" in
     c) CONFIG="$OPTARG" ;;
@@ -56,6 +78,9 @@ trap cleanup EXIT
 echo "Config:     $CONFIG"
 echo "Shards:     $NUM_SHARDS"
 echo "Output:     $OUTPUT"
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  echo "Extra args: ${EXTRA_ARGS[*]}"
+fi
 echo ""
 
 # Check for existing shard results
@@ -87,11 +112,25 @@ if [[ -n "$existing" ]]; then
   exit 1
 fi
 
+# If --save-traj is in extra args but --traj-name is not, generate a shared
+# traj-name so all shards write to the same trajectory directory.
+has_save_traj=false
+has_traj_name=false
+for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+  case "$arg" in
+    --save-traj) has_save_traj=true ;;
+    --traj-name) has_traj_name=true ;;
+  esac
+done
+if $has_save_traj && ! $has_traj_name; then
+  EXTRA_ARGS+=("--traj-name" "$(date -u +%Y%m%d_%H%M%S)")
+fi
+
 echo "Launching ${NUM_SHARDS} shards..."
 
 pids=()
 for i in $(seq 0 $((NUM_SHARDS - 1))); do
-  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" &
+  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" &
   pids+=($!)
 done
 
