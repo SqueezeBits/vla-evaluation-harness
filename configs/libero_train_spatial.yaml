@@ -1,0 +1,23 @@
+# LIBERO Spatial training-environment benchmark (failure trajectory collection)
+# Each task = one training episode from the noop-filtered dataset.
+# episodes_per_task must be 1 (episodes are encoded in the task list).
+server:
+  url: "ws://localhost:8000"
+
+docker:
+  image: ghcr.io/allenai/vla-evaluation-harness/libero:latest
+  volumes:
+    - "/home/data1/junhalee/data/libero_mappings:/home/data1/junhalee/data/libero_mappings:ro"
+
+output_dir: "./results"
+
+benchmarks:
+  - benchmark: "vla_eval.benchmarks.libero_train.benchmark:LIBEROTrainBenchmark"
+    subname: libero_train_spatial
+    mode: sync
+    episodes_per_task: 1
+    params:
+      suite: libero_spatial
+      mapping_file: "/home/data1/junhalee/data/libero_mappings/libero_spatial_mapping.json"
+      seed: 7
+      num_steps_wait: 10
