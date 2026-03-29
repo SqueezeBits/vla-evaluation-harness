@@ -62,6 +62,7 @@ class Orchestrator:
         self._traj_cfg = TrajectoryConfig.from_dict(config.get("trajectory"))
         self.shard_id = shard_id
         self.num_shards = num_shards
+        self._traj_base_dir: Path | None = None  # set when trajectory recording is enabled
 
     async def run(self) -> list[dict[str, Any]]:
         """Run all benchmarks defined in config."""
@@ -151,8 +152,9 @@ class Orchestrator:
                 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 traj_subdir = f"{model_name}_{timestamp}"
             traj_dir = output_dir / safe_bench / traj_subdir
+            self._traj_base_dir = traj_dir
             if self.num_shards is not None and self.shard_id is not None:
-                traj_dir = traj_dir / f"shard{self.shard_id}of{self.num_shards}"
+                traj_dir = traj_dir / f"_shard{self.shard_id}of{self.num_shards}"
             trajectory_writer = TrajectoryWriter(
                 output_dir=traj_dir,
                 fps=self._traj_cfg.fps,
@@ -318,7 +320,12 @@ class Orchestrator:
         """Save results to disk. Marks output as partial when the run was interrupted."""
         collector.print_summary()
 
-        output_dir = Path(self.config.get("output_dir", "./results"))
+        # When trajectory recording is active, co-locate result JSONs with trajectory data.
+        # Otherwise fall back to the top-level output_dir.
+        if self._traj_base_dir is not None:
+            output_dir = self._traj_base_dir
+        else:
+            output_dir = Path(self.config.get("output_dir", "./results"))
         output_dir.mkdir(parents=True, exist_ok=True)
         output: dict[str, Any] = {**collector.get_benchmark_result(config=cfg.to_dict())}
 
