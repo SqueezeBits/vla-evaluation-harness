@@ -116,14 +116,22 @@ fi
 # traj-name so all shards write to the same trajectory directory.
 has_save_traj=false
 has_traj_name=false
+traj_name=""
+next_is_traj_name=false
 for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+  if $next_is_traj_name; then
+    traj_name="$arg"
+    next_is_traj_name=false
+    continue
+  fi
   case "$arg" in
     --save-traj) has_save_traj=true ;;
-    --traj-name) has_traj_name=true ;;
+    --traj-name) has_traj_name=true; next_is_traj_name=true ;;
   esac
 done
 if $has_save_traj && ! $has_traj_name; then
-  EXTRA_ARGS+=("--traj-name" "$(date -u +%Y%m%d_%H%M%S)")
+  traj_name="$(date -u +%Y%m%d_%H%M%S)"
+  EXTRA_ARGS+=("--traj-name" "$traj_name")
 fi
 
 echo "Launching ${NUM_SHARDS} shards..."
@@ -148,6 +156,12 @@ if [[ "$failed" -gt 0 ]]; then
 fi
 
 echo "Merging results..."
-vla-eval merge -c "$CONFIG" -o "$OUTPUT"
+if $has_save_traj; then
+  vla-eval merge -c "$CONFIG" --traj-name "$traj_name" -o "$OUTPUT"
+  echo "Merging trajectory shards..."
+  vla-eval merge-traj -c "$CONFIG" --traj-name "$traj_name"
+else
+  vla-eval merge -c "$CONFIG" -o "$OUTPUT"
+fi
 
 echo "Done. Results saved to $OUTPUT"

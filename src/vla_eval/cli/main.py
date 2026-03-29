@@ -505,8 +505,11 @@ def cmd_serve(args: argparse.Namespace) -> None:
     _exec_subprocess(cmd)
 
 
-def _discover_shard_groups(config_path: str) -> dict[str, list[Path]]:
+def _discover_shard_groups(config_path: str, *, traj_name: str | None = None) -> dict[str, list[Path]]:
     """Auto-discover shard files from a config YAML, grouped by benchmark name.
+
+    Searches both the top-level ``output_dir`` and trajectory subdirectories
+    (``output_dir/<bench_name>/<traj_name>/``) for shard JSON files.
 
     Returns a dict mapping ``safe_name`` to its shard file paths.
     """
@@ -516,6 +519,7 @@ def _discover_shard_groups(config_path: str) -> dict[str, list[Path]]:
 
     config = _load_config(config_path)
     output_dir = Path(config.get("output_dir", "./results"))
+    cfg_traj_name = traj_name or config.get("trajectory", {}).get("traj_name")
 
     groups: dict[str, list[Path]] = {}
     for bench_cfg in config.get("benchmarks", []):
@@ -523,7 +527,13 @@ def _discover_shard_groups(config_path: str) -> dict[str, list[Path]]:
         safe_name = re.sub(r"[^\w\-.]", "_", cfg.resolved_name())
         if safe_name in groups:
             continue
+        # Search top-level output_dir (legacy location)
         matched = sorted(output_dir.glob(f"{safe_name}_shard*of*.json"))
+        # Also search trajectory subdirectory (co-located results)
+        if cfg_traj_name:
+            traj_dir = output_dir / safe_name / cfg_traj_name
+            if traj_dir.is_dir():
+                matched.extend(sorted(traj_dir.glob(f"{safe_name}_shard*of*.json")))
         if not matched:
             _stderr_console().print(f"[yellow]WARNING: no shard files found for {safe_name} in {output_dir}[/yellow]")
         groups[safe_name] = matched
@@ -543,7 +553,8 @@ def cmd_merge(args: argparse.Namespace) -> None:
 
     # When --config is given, merge each sub-benchmark separately.
     if args.config:
-        groups = _discover_shard_groups(args.config)
+        cli_traj_name = getattr(args, "traj_name", None)
+        groups = _discover_shard_groups(args.config, traj_name=cli_traj_name)
         # Also include any explicitly passed files as an extra group
         if args.files:
             extra: list[Path] = []
@@ -613,6 +624,54 @@ def cmd_merge(args: argparse.Namespace) -> None:
         _stderr_console().print(f"Merged result saved to {output}")
     else:
         print(json.dumps(merged, indent=2, default=str))
+
+
+def cmd_merge_traj(args: argparse.Namespace) -> None:
+    """Merge per-shard trajectory directories into a unified dataset."""
+    from vla_eval.results.trajectory_writer import merge_trajectory_shards
+
+    traj_dirs: list[Path] = []
+
+    if args.config:
+        import re
+
+        from vla_eval.cli.config_loader import load_config
+
+        config = load_config(args.config)
+        output_dir = Path(config.get("output_dir", "./results"))
+        traj_cfg = config.get("trajectory", {})
+        traj_name = getattr(args, "traj_name", None) or traj_cfg.get("traj_name")
+        if not traj_name:
+            _stderr_console().print(
+                "[red]ERROR: --config requires trajectory.traj_name in config or --traj-name arg[/red]"
+            )
+            sys.exit(1)
+        for bench in config.get("benchmarks", []):
+            name = bench.get("name") or bench["benchmark"].rsplit(":", 1)[-1]
+            sub = bench.get("subname")
+            if sub:
+                name = f"{name}_{sub}"
+            safe = re.sub(r"[^\w\-.]", "_", name)
+            candidate = output_dir / safe / traj_name
+            if candidate.exists():
+                traj_dirs.append(candidate)
+
+    if args.dirs:
+        traj_dirs.extend(Path(d) for d in args.dirs)
+
+    if not traj_dirs:
+        _stderr_console().print("[red]ERROR: no trajectory directories found. Provide paths or --config.[/red]")
+        sys.exit(1)
+
+    keep = args.keep_shards
+    for traj_dir in traj_dirs:
+        if not traj_dir.exists():
+            _stderr_console().print(f"[yellow]WARNING: {traj_dir} does not exist, skipping[/yellow]")
+            continue
+        _stderr_console().print(f"Merging trajectory shards in {traj_dir} ...")
+        merge_trajectory_shards(traj_dir, remove_shards=not keep)
+
+    _stderr_console().print("[green]Trajectory merge complete.[/green]")
 
 
 def cmd_test(args: argparse.Namespace) -> None:
@@ -980,8 +1039,42 @@ examples:
         "--config", "-c", default=None, help="Config YAML — auto-discover shard files from output_dir"
     )
     merge_parser.add_argument("--output", "-o", default=None, help="Output path for merged JSON (default: stdout)")
+    merge_parser.add_argument(
+        "--traj-name", default=None, help="Trajectory subdirectory name (to find co-located shard results)"
+    )
     merge_parser.add_argument("--verbose", "-v", action="store_true")
     merge_parser.set_defaults(func=cmd_merge)
+
+    # merge-traj command
+    merge_traj_parser = sub.add_parser(
+        "merge-traj",
+        help="Merge per-shard trajectory directories into a unified dataset",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Combines _shard{id}of{total} subdirectories produced by sharded runs with
+--save-traj into a single LeRobot-format dataset directory.
+
+  Moves data/video files, merges metadata (episodes.jsonl, tasks.jsonl,
+  episodes_stats.jsonl, info.json), and removes the temporary shard dirs.
+
+examples:
+  vla-eval merge-traj results/LIBEROTrainBenchmark/20250329_120000
+  vla-eval merge-traj -c configs/libero_train_spatial.yaml
+  vla-eval merge-traj results/*/my_traj_name --keep-shards
+""",
+    )
+    merge_traj_parser.add_argument("dirs", nargs="*", help="Trajectory root directories containing _shard* subdirs")
+    merge_traj_parser.add_argument(
+        "--config", "-c", default=None, help="Config YAML — auto-discover trajectory dirs from output_dir"
+    )
+    merge_traj_parser.add_argument(
+        "--traj-name", default=None, help="Trajectory subdirectory name (overrides config value)"
+    )
+    merge_traj_parser.add_argument(
+        "--keep-shards", action="store_true", default=False, help="Keep shard subdirectories after merging"
+    )
+    merge_traj_parser.add_argument("--verbose", "-v", action="store_true")
+    merge_traj_parser.set_defaults(func=cmd_merge_traj)
 
     # test command
     test_parser = sub.add_parser(
