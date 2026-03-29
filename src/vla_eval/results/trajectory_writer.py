@@ -553,6 +553,139 @@ def _array_stats(arr: np.ndarray) -> dict[str, list[float]]:
     }
 
 
+def merge_trajectory_shards(traj_dir: str | Path, *, remove_shards: bool = True) -> None:
+    """Merge per-shard trajectory subdirectories into a single dataset.
+
+    Expects shard directories named ``_shard{id}of{total}`` under *traj_dir*.
+    Moves data/video files to the parent, merges metadata, and optionally
+    removes the temporary shard directories.
+    """
+    import shutil
+
+    root = Path(traj_dir)
+    shard_dirs = sorted(root.glob("_shard*of*"))
+    if not shard_dirs:
+        logger.info("No shard directories found in %s, nothing to merge.", root)
+        return
+
+    logger.info("Merging %d trajectory shards in %s", len(shard_dirs), root)
+
+    # --- Move data and video files ---
+    for shard_dir in shard_dirs:
+        for sub in ("data", "videos"):
+            src = shard_dir / sub
+            if not src.exists():
+                continue
+            for file in src.rglob("*"):
+                if not file.is_file():
+                    continue
+                rel = file.relative_to(shard_dir)
+                dst = root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if dst.exists():
+                    logger.warning("Overwriting %s during shard merge", dst)
+                shutil.move(str(file), str(dst))
+
+    # --- Merge metadata ---
+    all_episodes: list[dict[str, Any]] = []
+    all_stats: list[dict[str, Any]] = []
+    all_tasks: dict[str, int] = {}  # task_description -> task_index
+    info_base: dict[str, Any] | None = None
+
+    for shard_dir in shard_dirs:
+        meta = shard_dir / "meta"
+        if not meta.exists():
+            continue
+
+        # episodes.jsonl
+        ep_file = meta / "episodes.jsonl"
+        if ep_file.exists():
+            for line in ep_file.read_text().strip().splitlines():
+                all_episodes.append(json.loads(line))
+
+        # episodes_stats.jsonl
+        stats_file = meta / "episodes_stats.jsonl"
+        if stats_file.exists():
+            for line in stats_file.read_text().strip().splitlines():
+                all_stats.append(json.loads(line))
+
+        # tasks.jsonl — collect unique tasks
+        tasks_file = meta / "tasks.jsonl"
+        if tasks_file.exists():
+            for line in tasks_file.read_text().strip().splitlines():
+                rec = json.loads(line)
+                task_desc = rec["task"]
+                if task_desc not in all_tasks:
+                    all_tasks[task_desc] = len(all_tasks)
+
+        # info.json — use first as base, update totals later
+        info_file = meta / "info.json"
+        if info_file.exists() and info_base is None:
+            info_base = json.loads(info_file.read_text())
+
+    # Sort by episode_index for deterministic output
+    all_episodes.sort(key=lambda e: e.get("episode_index", 0))
+    all_stats.sort(key=lambda e: e.get("episode_index", 0))
+
+    # Reassign task indices consistently
+    for ep in all_episodes:
+        for task_desc in ep.get("tasks", []):
+            if task_desc not in all_tasks:
+                all_tasks[task_desc] = len(all_tasks)
+
+    # Write merged metadata
+    meta_dir = root / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_jsonl_static(meta_dir / "episodes.jsonl", all_episodes)
+    _write_jsonl_static(meta_dir / "episodes_stats.jsonl", all_stats)
+    _write_jsonl_static(
+        meta_dir / "tasks.jsonl",
+        [{"task_index": idx, "task": desc} for desc, idx in sorted(all_tasks.items(), key=lambda x: x[1])],
+    )
+
+    # Update info.json with merged totals
+    if info_base is not None:
+        total_episodes = len(all_episodes)
+        total_frames = sum(ep.get("length", 0) for ep in all_episodes)
+        max_ep_idx = max((ep.get("episode_index", 0) for ep in all_episodes), default=0)
+        chunks_size = info_base.get("chunks_size", _DEFAULT_CHUNKS_SIZE)
+        total_chunks = (max_ep_idx // chunks_size) + 1
+        num_cameras = len([k for k in info_base.get("features", {}) if k.startswith("observation.images.")])
+        total_videos = total_episodes * num_cameras
+
+        info_base["total_episodes"] = total_episodes
+        info_base["total_frames"] = total_frames
+        info_base["total_tasks"] = len(all_tasks)
+        info_base["total_videos"] = total_videos
+        info_base["total_chunks"] = total_chunks
+
+        split_key = next(iter(info_base.get("splits", {})), "eval")
+        info_base["splits"] = {split_key: f"0:{total_episodes}"}
+
+        with open(meta_dir / "info.json", "w") as f:
+            json.dump(info_base, f, indent=2)
+
+    # --- Remove shard directories ---
+    if remove_shards:
+        for shard_dir in shard_dirs:
+            shutil.rmtree(shard_dir, ignore_errors=True)
+        logger.info("Removed %d shard directories.", len(shard_dirs))
+
+    logger.info(
+        "Trajectory merge complete: %d episodes, %d frames.",
+        len(all_episodes),
+        sum(ep.get("length", 0) for ep in all_episodes),
+    )
+
+
+def _write_jsonl_static(path: Path, records: list[dict[str, Any]]) -> None:
+    """Write a list of dicts as newline-delimited JSON (standalone version)."""
+    with open(path, "w") as f:
+        for record in records:
+            f.write(json.dumps(record, default=_json_default) + "\n")
+
+
 def _json_default(obj: object) -> Any:
     """JSON serializer fallback for numpy types."""
     if isinstance(obj, np.bool_):

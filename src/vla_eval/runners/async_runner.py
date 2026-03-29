@@ -99,7 +99,8 @@ class AsyncEpisodeRunner(EpisodeRunner):
             task_description = task.get("name", str(task))
             if trajectory_writer is not None:
                 try:
-                    trajectory_writer.start_episode(task_description=task_description)
+                    traj_ep_idx = task.get("lerobot_episode_idx")
+                    trajectory_writer.start_episode(task_description=task_description, episode_index=traj_ep_idx)
                 except Exception:
                     logger.warning("Trajectory start_episode failed, disabling for this episode", exc_info=True)
                     trajectory_writer = None
