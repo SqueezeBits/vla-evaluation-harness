@@ -155,6 +155,11 @@ if [[ "$failed" -gt 0 ]]; then
   exit 1
 fi
 
+# Fix ownership of Docker-created results (containers run as root).
+if [[ -d "results" ]]; then
+  vla-eval fix-perms results
+fi
+
 echo "Merging results..."
 if $has_save_traj; then
   vla-eval merge -c "$CONFIG" --traj-name "$traj_name" -o "$OUTPUT"

@@ -674,6 +674,25 @@ def cmd_merge_traj(args: argparse.Namespace) -> None:
     _stderr_console().print("[green]Trajectory merge complete.[/green]")
 
 
+def cmd_fix_perms(args: argparse.Namespace) -> None:
+    """Fix ownership of Docker-created results via a temporary container."""
+    import subprocess
+
+    target = Path(args.path).resolve()
+    if not target.is_dir():
+        logger.error("Directory not found: %s", target)
+        sys.exit(1)
+    uid, gid = os.getuid(), os.getgid()
+    docker = _find_docker()
+    logger.info("Fixing ownership of %s to %d:%d", target, uid, gid)
+    subprocess.run(
+        [docker, "run", "--rm", "-v", f"{target}:/target", "alpine",
+         "chown", "-R", f"{uid}:{gid}", "/target"],
+        check=True,
+    )
+    logger.info("Done.")
+
+
 def cmd_test(args: argparse.Namespace) -> None:
     """Run smoke tests across CLI commands."""
     from vla_eval.cli.smoke import (
@@ -1134,6 +1153,17 @@ examples:
     test_parser.add_argument("-x", "--fail-fast", action="store_true", help="Stop at first failure")
     test_parser.add_argument("--verbose", "-v", action="store_true")
     test_parser.set_defaults(func=cmd_test)
+
+    # -- fix-perms ---------------------------------------------------------
+    fix_perms_parser = sub.add_parser(
+        "fix-perms",
+        help="Fix ownership of Docker-created results (runs chown via a container)",
+    )
+    fix_perms_parser.add_argument(
+        "path", nargs="?", default="results",
+        help="Directory to fix (default: results/)",
+    )
+    fix_perms_parser.set_defaults(func=cmd_fix_perms)
 
     args = parser.parse_args()
     _setup_logging(getattr(args, "verbose", False))
