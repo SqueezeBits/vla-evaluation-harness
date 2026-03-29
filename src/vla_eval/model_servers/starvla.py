@@ -317,6 +317,10 @@ class StarVLAModelServer(PredictModelServer):
         self._action_stats = norm_stats[unnorm_key]["action"]
         logger.info("Model loaded on %s (unnorm_key=%s)", device, unnorm_key)
 
+    def get_model_name(self) -> str:
+        """Derive model name from checkpoint path or HF model ID."""
+        return Path(self.checkpoint).stem if Path(self.checkpoint).is_file() else self.checkpoint.replace("/", "_")
+
     def get_observation_params(self) -> dict[str, Any]:
         return dict(self._observation_params)
 

@@ -81,6 +81,14 @@ class ModelServer(ABC):
     async def on_episode_end(self, result: dict[str, Any], ctx: SessionContext) -> None:
         """Called at episode end. Optional."""
 
+    def get_model_name(self) -> str:
+        """Return a human-readable model name for logging and directory naming.
+
+        Override in subclasses to derive from checkpoint path or model config.
+        The default returns the class name.
+        """
+        return type(self).__name__
+
     def get_observation_params(self) -> dict[str, Any]:
         """Declare observation requirements for this model.
 

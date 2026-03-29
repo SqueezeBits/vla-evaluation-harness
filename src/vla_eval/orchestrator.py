@@ -148,7 +148,11 @@ class Orchestrator:
             if self._traj_cfg.traj_name:
                 traj_subdir = self._traj_cfg.traj_name
             else:
-                model_name = self._traj_cfg.name or conn.server_info.get("model_server", "unknown")
+                model_name = (
+                    self._traj_cfg.name
+                    or conn.server_info.get("model_name")
+                    or conn.server_info.get("model_server", "unknown")
+                )
                 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 traj_subdir = f"{model_name}_{timestamp}"
             traj_dir = output_dir / safe_bench / traj_subdir

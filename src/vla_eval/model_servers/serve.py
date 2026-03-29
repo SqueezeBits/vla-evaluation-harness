@@ -92,6 +92,7 @@ async def _handle_connection(
                 obs_params = model_server.get_observation_params()
                 reply_payload = make_hello_payload(
                     model_server=type(model_server).__name__,
+                    model_name=model_server.get_model_name(),
                     capabilities={},
                     **({"observation_params": obs_params} if obs_params else {}),
                 )
