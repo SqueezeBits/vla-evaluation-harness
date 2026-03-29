@@ -104,6 +104,7 @@ async def _handle_connection(
                     pass
                 reply_payload = make_hello_payload(
                     model_server=type(model_server).__name__,
+                    model_name=model_server.get_model_name(),
                     capabilities={},
                     **extra,
                 )
