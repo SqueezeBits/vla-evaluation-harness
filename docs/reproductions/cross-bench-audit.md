@@ -335,12 +335,14 @@ STATUS: Not reproduced (OLD Docker, not verified)
    - Official uses interleaved layout from `euler_xyz_to_rotate6D` (xvla_calvin_client.py:50)
    - Ours uses contiguous layout from `axisangle_to_rot6d_contiguous` (xvla.py:65,200)
    - Impact: The rot6d values fed as proprio will be in a different memory layout, causing the model to receive mismatched proprioceptive input. However, after the first step, predicted proprio is used (action[:10]), which the model itself produced, so the layout is self-consistent from step 2 onward. The initial step mismatch may cause a small perturbation.
+   - **FIXED**: `_state_to_xvla_proprio` now uses `euler_to_rot6d_interleaved` for the `calvin` profile to match the official convention
 
 2. **State interpretation: euler treated as axis-angle** — CRITICAL
    - CALVIN robot_obs[3:6] contains euler XYZ angles (benchmark.py:570-572 sends raw[0:7] which includes euler at indices 3:6)
    - xvla.py:192-201 `_state_to_xvla_proprio` calls `_axisangle_to_rot6d(state[3:6])`, interpreting the euler values as axis-angle
    - For small angles, euler and axis-angle are approximately equal, which may explain why the model still partially works (3.97 avg_len)
    - Impact: Corrupted initial proprio; mitigated by predicted proprio on subsequent steps
+   - **FIXED**: `calvin` profile now uses `euler_state: True` so state[3:6] is interpreted as euler XYZ, matching `robot_obs` format
 
 3. **Gripper threshold and polarity** — HIGH
    - Official: `<0.8 -> 1 (open), >=0.8 -> -1 (close)`, threshold=0.8
@@ -348,15 +350,27 @@ STATUS: Not reproduced (OLD Docker, not verified)
    - CALVIN gripper convention: +1=open, -1=close
    - Our mapping is inverted: we output +1 for close, but CALVIN treats +1 as open
    - Impact: Gripper actions are correct in magnitude but the polarity interpretation differs from official
+   - **Fix note**: Only the threshold needs changing (0.5→0.8). The comparison direction (`>`) must NOT be changed — the benchmark's `_process_absolute_action` at line 524 already handles the CALVIN polarity flip (`>0 → -1 = close in CALVIN`). Changing both would cause a double-flip bug.
+   - **FIXED**: Threshold changed to 0.8 in the `calvin` profile
 
 4. **EP_LEN: 360 vs 720** — HIGH
    - Official allows 720 steps per subtask; ours allows 360
    - Impact: Model has half the time budget to complete each subtask, directly reducing avg_len
+   - **FIXED**: Added `"ep_len": 720` to `_PROFILE_OBS_PARAMS["calvin"]`; benchmark uses this via obs_params to override the default EP_LEN
 
 5. **Action format delivered to CALVIN env** — MEDIUM
    - Official sends `(pos3, quat4, gripper_int)` tuple to CALVIN env.step()
    - Ours sends 7D [pos3, euler3, gripper] via `_process_absolute_action`
    - The CALVIN `CalvinEnvWrapper.step()` may handle these differently internally
+   - **FIXED**: Our `_process_absolute_action` converts aa->euler and sends [pos3, euler3, gripper] which CALVIN env accepts correctly
+
+6. **`absolute_action` not set in obs_params** — CRITICAL
+   - `_PROFILE_OBS_PARAMS["calvin"]` at `xvla.py:127` did not include `absolute_action: True`
+   - LIBERO obs_params at `xvla.py:126` includes it, but CALVIN was missing it
+   - Without it, CALVIN benchmark defaults to `absolute_action=False` (delta mode)
+   - X-VLA CALVIN outputs absolute actions — running in delta mode causes the model's absolute position outputs to be accumulated as deltas
+   - Impact: Fundamental action interpretation mismatch. This is arguably the most critical discrepancy.
+   - **FIXED**: Added `"absolute_action": True, "ep_len": 720` to `_PROFILE_OBS_PARAMS["calvin"]`
 
 ### Notes
 - The 3.97 avg_len (vs 4.43 reported) with these discrepancies suggests the model is robust enough to partially compensate, likely because: (a) predicted proprio dominates after step 1, (b) small CALVIN euler angles approximate axis-angle, (c) the model's policy may be tolerant of gripper threshold differences.
@@ -402,34 +416,42 @@ STATUS: Not reproduced
    - simpler_widowx.yaml:8 sets `benchmark_profile: "simpler_widowx"` but xvla.py:84-114 only has `"simpler"` in `_BENCHMARK_PROFILES`
    - xvla.py:118-122 `_get_profile` raises `ValueError` for unknown profiles
    - Impact: Server would crash on startup. The 0% score may indicate this config was never actually run successfully, or the profile name was changed after the config was written.
+   - **FIXED**: Added `"simpler_widowx"` profile to `_BENCHMARK_PROFILES` with correct `output_action_dim=7`, interleaved rot6d decode, euler offset, and gripper threshold/direction
 
 2. **euler_offset not implemented** — BLOCKER
    - simpler_widowx.yaml:11 has `euler_offset: "0,1.5707963,0"` but `euler_offset` is not a parameter of `XVLAModelServer.__init__` (xvla.py:207-218)
-   - `run_server` auto-parses CLI args from `__init__` signature; unknown keys are silently ignored in YAML configs
+   - The `euler_offset` parameter causes an argparse crash when the server starts — `run_server` builds argparse from `__init__` signature, and unknown args raise "unrecognized arguments" error. It is NOT silently ignored.
    - Official adds `[0, pi/2, 0]` to euler output (xvla_simpler_widowx_client.py:95)
    - Impact: Without this offset, all rotation actions are in the wrong coordinate frame
+   - **FIXED**: `euler_offset` added as a parameter to `XVLAModelServer.__init__`; applied during action conversion in the `simpler_widowx` profile
 
 3. **No state/proprio from SimplerEnv** — BLOCKER
    - SimplerEnv benchmark has no `send_state` parameter; never sends state
    - Official computes EE pose wrt base from `obs["agent"]["base_pose"]` and `obs["extra"]["tcp_pose"]`
    - Impact: Model receives zero proprio instead of meaningful EE pose, corrupting the policy input
+   - **FIXED**: Added `send_state` parameter to SimplerEnv benchmark; sends 8D EE pose state when enabled; simpler_widowx.yaml sets `send_state: true`
 
 4. **Action output format: raw 20D vs converted 7D** — BLOCKER
    - The "simpler" profile has `output_action_dim=None` (xvla.py:98-102), so 20D raw actions are returned
    - SimplerEnv benchmark.py:195 asserts `len(raw_action) == 7` — this would crash
    - Impact: Action dimension mismatch causes runtime crash
+   - **FIXED**: `simpler_widowx` profile sets `output_action_dim=7` and performs rot6d→euler conversion + euler_offset
 
 5. **max_steps: 120 vs 1200** — BLOCKER
    - Official uses 1200 steps; ours uses 120 (10x fewer)
    - Impact: Catastrophically insufficient time budget
+   - **FIXED**: New `configs/simpler_xvla_widowx.yaml` config sets `max_episode_steps: 1200` for all 4 tasks
 
 6. **Gripper threshold: 0.5 vs 0.7** — MEDIUM
    - Different thresholds for gripper binarization
    - Impact: Some gripper actions may be incorrectly classified
+   - **Fix note**: For WidowX Bridge domain, the comparison direction must be INVERTED: `< 0.7 → close(+1)` not `> 0.7 → close(+1)`. This is because the Bridge domain's sigmoid convention is opposite to LIBERO — low sigmoid means close.
+   - **FIXED**: `simpler_widowx` profile uses threshold=0.7 with inverted comparison (`< 0.7 → close`)
 
 7. **rot6d decode convention: interleaved vs contiguous** — HIGH (if action conversion were implemented)
    - Official uses interleaved decode (`v6[..., 0:5:2]` stride-2); ours uses contiguous
    - Impact: Wrong rotation values in output actions
+   - **FIXED**: `simpler_widowx` profile uses interleaved rot6d decode matching official `rotate6D_to_euler_xyz`
 
 ### Notes
 - This pair has at least 5 BLOCKER-level issues. The 0% score is expected. The config appears to have been written speculatively without implementing the required server-side changes.
@@ -477,22 +499,26 @@ STATUS: Not reproduced
    - Official GR00T eval extracts 8D state [x, y, z, roll', pitch', yaw', pad, gripper] with bridge rotation correction (`quat2mat @ default_rot.T`)
    - Ours sends zero state
    - Impact: Model receives no proprioceptive feedback, degrading action quality significantly
+   - **FIXED**: Added `send_state` parameter to SimplerEnv benchmark; sends 8D state with bridge rotation correction when `bridge_rotation: true` is set in the model server config
 
 2. **Bridge rotation correction missing** — CRITICAL (dependent on #1)
    - Official applies `default_rot = [[0,0,1],[0,1,0],[-1,0,0]]` rotation correction to convert ManiSkill2 quat to bridge-convention euler
    - Even if state were sent, our SimplerEnv benchmark doesn't apply this correction
    - Impact: Would need custom state processing in SimplerEnv benchmark
+   - **FIXED**: SimplerEnv benchmark applies bridge rotation correction when obs_params includes `bridge_rotation: true`; groot/simpler_widowx.yaml now sets `bridge_rotation: true`
 
 3. **max_episode_steps: 120 vs 10000** — HIGH
    - Official overrides to 10000 steps (effectively unlimited)
    - Ours uses 120 steps
    - Impact: With 120 steps at 5Hz = 24 seconds of robot time, many tasks may not complete. However, the official eval's `done` flag from the env can terminate episodes early, so 10000 is more of "no artificial limit" rather than "needs 10000 steps."
+   - **FIXED**: New `configs/simpler_groot_widowx.yaml` config sets `max_episode_steps: 10000` for all 4 tasks
 
 4. **Gripper polarity uncertain** — MEDIUM
    - Without `invert_gripper`, GR00T's raw [0,1] output passes through
    - benchmark.py:202 binarizes at 0.5: >0.5->+1(close in ManiSkill2), <=0.5->-1(open)
    - If GR00T bridge outputs 0=close, 1=open, then 1(open)->+1(close_in_env) = INVERTED
    - Impact: Gripper may be inverted; needs `invert_gripper: true` for SimplerEnv or a different gripper mapping
+   - Still needs empirical testing to confirm correct polarity direction
 
 ### Notes
 - The 25% success rate (vs 57.1% reported) with missing state and potentially wrong max_steps suggests the model can partially succeed on pure vision, but state feedback is important for this benchmark.
@@ -512,7 +538,7 @@ STATUS: Not reproduced
 | 5 | DB-CogACT x LIBERO | 95.2% (94.9%) | Reproduced | 0 |
 | 6 | DB-CogACT x CALVIN | 4.05 (4.06) | Reproduced | 0 |
 | 7 | DB-CogACT x SimplerEnv | 72.2% (69.5%) | Reproduced | 0 |
-| 8 | X-VLA x CALVIN | 3.97 (4.43) | Not reproduced | 5 (rot6d, euler-as-aa, gripper, EP_LEN, action format) |
+| 8 | X-VLA x CALVIN | 3.97 (4.43) | Not reproduced | 6 (rot6d, euler-as-aa, gripper, EP_LEN, action format, absolute_action) |
 | 9 | X-VLA x SimplerEnv | 0% (95.8%) | Not reproduced | 5 BLOCKERS (profile missing, euler_offset, no state, action dim, max_steps) |
 | 10 | GR00T x SimplerEnv | 25% (57.1%) | Not reproduced | 3 (no state, bridge rotation, max_steps) |
 
