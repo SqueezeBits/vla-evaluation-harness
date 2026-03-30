@@ -12,12 +12,7 @@ from typing import Any
 import numpy as np
 
 from vla_eval.benchmarks.base import StepBenchmark, StepResult
-from vla_eval.specs import (
-    GRIPPER_RAW,
-    IMAGE_RGB,
-    LANGUAGE,
-    DimSpec,
-)
+from vla_eval.specs import GRIPPER_RAW, IMAGE_RGB, LANGUAGE, DimSpec
 from vla_eval.types import Action, EpisodeResult, Observation, Task
 
 # The Docker entrypoint starts Xvfb and sets DISPLAY=:99.

@@ -60,6 +60,7 @@ class GR00TModelServer(PredictModelServer):
         invert_gripper: bool = False,
         image_resolution: int | None = None,
         bridge_rotation: bool = False,
+        max_episode_steps: int | None = None,
         *,
         chunk_size: int = 16,
         action_ensemble: str = "newest",
@@ -73,6 +74,7 @@ class GR00TModelServer(PredictModelServer):
         self.invert_gripper = invert_gripper
         self.image_resolution = image_resolution
         self.bridge_rotation = bridge_rotation
+        self._max_episode_steps = max_episode_steps
         self._policy = None
         self._modality_config: dict[str, Any] | None = None
         self._state_dims: dict[str, int] = {}
@@ -162,7 +164,10 @@ class GR00TModelServer(PredictModelServer):
         )
 
     def get_observation_params(self) -> dict[str, Any]:
-        return {"send_wrist_image": True, "send_state": True}
+        params: dict[str, Any] = {"send_wrist_image": True, "send_state": True}
+        if self._max_episode_steps is not None:
+            params["max_episode_steps"] = self._max_episode_steps
+        return params
 
     def get_action_spec(self) -> dict[str, DimSpec]:
         gripper = GRIPPER_CLOSE_POS if self.invert_gripper else GRIPPER_01

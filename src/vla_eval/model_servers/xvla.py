@@ -159,7 +159,7 @@ _PROFILE_OBS_PARAMS: dict[str, dict[str, Any]] = {
     "libero": {"send_wrist_image": True, "send_state": True, "absolute_action": True},
     "calvin": {"send_wrist_image": True, "send_state": True, "absolute_action": True, "ep_len": 720},
     "simpler": {"send_state": True},
-    "simpler_widowx": {"send_state": True},
+    "simpler_widowx": {"send_state": True, "max_episode_steps": 1200},
     "vlabench": {"send_wrist_image": True, "send_state": True},
     "robotwin": {"send_state": True},
 }

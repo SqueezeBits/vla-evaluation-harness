@@ -7,4 +7,5 @@ args:
   image_resolution: 256
   chunk_size: 16
   bridge_rotation: true
+  max_episode_steps: 10000
   port: 8000
