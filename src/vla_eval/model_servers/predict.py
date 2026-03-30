@@ -132,6 +132,7 @@ class PredictModelServer(ModelServer):
     def __init__(
         self,
         *,
+        model_name: str | None = None,
         chunk_size: int | None = None,
         action_ensemble: str | Callable[[np.ndarray, np.ndarray], np.ndarray] = "newest",
         ema_alpha: float = 0.5,
@@ -141,6 +142,7 @@ class PredictModelServer(ModelServer):
         laas: bool = False,
         hz: float = 10.0,
     ) -> None:
+        self._model_name_override = model_name
         self.chunk_size = chunk_size
         self.action_ensemble = action_ensemble
         self.ema_alpha = ema_alpha

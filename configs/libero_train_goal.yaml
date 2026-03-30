@@ -5,7 +5,7 @@ server:
 docker:
   image: ghcr.io/allenai/vla-evaluation-harness/libero:latest
   volumes:
-    - "/home/data1/junhalee/data/libero_mappings:/home/data1/junhalee/data/libero_mappings:ro"
+    - "/home/data1/junhalee/data:/home/data1/junhalee/data:ro"
 
 output_dir: "./results"
 
@@ -19,3 +19,4 @@ benchmarks:
       mapping_file: "/home/data1/junhalee/data/libero_mappings/libero_goal_mapping.json"
       seed: 7
       num_steps_wait: 10
+      send_state: true

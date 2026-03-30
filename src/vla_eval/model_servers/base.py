@@ -84,9 +84,13 @@ class ModelServer(ABC):
     def get_model_name(self) -> str:
         """Return a human-readable model name for logging and directory naming.
 
-        Override in subclasses to derive from checkpoint path or model config.
-        The default returns the class name.
+        If ``--model-name`` was passed on the CLI (or ``model_name`` set in
+        config), that value takes priority.  Otherwise subclasses can override
+        to derive from checkpoint path.  The final fallback is the class name.
         """
+        override = getattr(self, "_model_name_override", None)
+        if override:
+            return override
         return type(self).__name__
 
     def get_observation_params(self) -> dict[str, Any]:
