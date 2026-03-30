@@ -16,6 +16,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from vla_eval.specs import DimSpec
+
 import numpy as np
 
 from vla_eval.types import Action, EpisodeResult, Observation, Task
@@ -92,7 +94,7 @@ class Benchmark(ABC):
 
     # -- optional overrides -----------------------------------------------
 
-    def get_action_spec(self) -> dict[str, Any]:
+    def get_action_spec(self) -> dict[str, DimSpec]:
         """Declare the action input format this benchmark's env consumes.
 
         Returns a ``{component_name: DimSpec}`` dict.  Use ``accepts`` on
@@ -103,7 +105,7 @@ class Benchmark(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} must override get_action_spec()")
 
-    def get_observation_spec(self) -> dict[str, Any]:
+    def get_observation_spec(self) -> dict[str, DimSpec]:
         """Declare the observation output format this benchmark produces.
 
         Returns a ``{component_name: DimSpec}`` dict describing what

@@ -16,7 +16,7 @@ import websockets
 from vla_eval.config import EvalConfig, ServerConfig
 from vla_eval.connection import Connection
 from vla_eval.registry import resolve_import_string
-from vla_eval.specs import check_specs  # noqa: F401  (used for cross-validation; imported for future HELLO-handshake extension)
+from vla_eval.specs import DimSpec, check_specs
 from vla_eval.results.collector import EpisodeResult, ResultCollector
 from vla_eval.runners.async_runner import AsyncEpisodeRunner
 from vla_eval.runners.clock import Clock
@@ -105,23 +105,28 @@ class Orchestrator:
             await conn.close()
             raise
 
-        # Validate action/observation specs between server and benchmark.
-        # TODO: extend the HELLO handshake (serve.py) to include action_spec and
-        # observation_spec so we can cross-validate server↔benchmark here.
+        # Cross-validate action/observation specs between server and benchmark.
         try:
-            bench_action_spec: dict = {}
-            bench_obs_spec: dict = {}
+            bench_action_spec: dict[str, DimSpec] = {}
+            bench_obs_spec: dict[str, DimSpec] = {}
+            server_action_spec: dict[str, DimSpec] = {}
+            server_obs_spec: dict[str, DimSpec] = {}
             try:
                 bench_action_spec = benchmark.get_action_spec()
                 bench_obs_spec = benchmark.get_observation_spec()
             except NotImplementedError:
                 logger.debug("Benchmark %s does not implement specs yet", name)
-            if bench_action_spec or bench_obs_spec:
-                logger.info(
-                    "Benchmark specs: action=%s, observation=%s",
-                    list(bench_action_spec.keys()),
-                    list(bench_obs_spec.keys()),
-                )
+            # Deserialize server specs from HELLO handshake
+            for key, raw in conn.server_info.get("action_spec", {}).items():
+                server_action_spec[key] = DimSpec.from_dict(raw)
+            for key, raw in conn.server_info.get("observation_spec", {}).items():
+                server_obs_spec[key] = DimSpec.from_dict(raw)
+            if (server_action_spec or server_obs_spec) and (bench_action_spec or bench_obs_spec):
+                warnings = check_specs(server_action_spec, bench_action_spec, server_obs_spec, bench_obs_spec)
+                for w in warnings:
+                    logger.warning("Spec mismatch: %s", w)
+                if not warnings:
+                    logger.info("Spec validation passed (server↔benchmark compatible)")
         except Exception:
             logger.debug("Spec validation skipped", exc_info=True)
 

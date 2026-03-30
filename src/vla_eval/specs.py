@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -65,6 +66,29 @@ class DimSpec:
             elif np.any(chunk < lo - 0.01) or np.any(chunk > hi + 0.01):
                 errors.append(f"{self.name}: values outside [{lo}, {hi}]")
         return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dict (for wire protocol / msgpack)."""
+        d: dict[str, Any] = {"name": self.name, "dims": self.dims, "format": self.format}
+        if self.range is not None:
+            d["range"] = list(self.range)
+        if self.accepts is not None:
+            d["accepts"] = sorted(self.accepts)
+        if self.description:
+            d["description"] = self.description
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DimSpec:
+        """Deserialize from a plain dict."""
+        return cls(
+            name=d["name"],
+            dims=d["dims"],
+            format=d["format"],
+            range=tuple(d["range"]) if "range" in d else None,
+            accepts=frozenset(d["accepts"]) if "accepts" in d else None,
+            description=d.get("description", ""),
+        )
 
     def is_compatible(self, other: DimSpec) -> tuple[bool, str]:
         """Check if ``self`` (producer) is consumable by ``other`` (consumer).
