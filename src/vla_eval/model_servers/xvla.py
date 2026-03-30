@@ -78,6 +78,7 @@ from vla_eval.rotation import (
     matrix_to_euler_xyz,
     matrix_to_quat as _mat_to_quat,
     quat_to_axisangle as _quat_to_axisangle,
+    quat_to_matrix as _quat_to_matrix,
     rot6d_interleaved_to_matrix as _rot6d_to_matrix,
 )
 
@@ -165,6 +166,22 @@ _PROFILE_OBS_PARAMS: dict[str, dict[str, Any]] = {
     "vlabench": {"send_wrist_image": True, "send_state": True},
     "robotwin": {"send_state": True},
 }
+
+
+def _compute_ee_pos_wrt_base(base_pose: np.ndarray, tcp_pose: np.ndarray) -> np.ndarray:
+    """Compute EE position relative to robot base (matches official X-VLA SimplerEnv eval).
+
+    ``base_pose`` and ``tcp_pose`` are 7-D ``[pos3, quat4]`` from ManiSkill2
+    (quaternion in ``[w, x, y, z]`` order).  Returns 3-D position only.
+    """
+    # Quaternion inverse: q_inv = conjugate / norm^2 (unit quat → just conjugate)
+    bq = base_pose[3:7]  # [w, x, y, z]
+    bq_inv = np.array([bq[0], -bq[1], -bq[2], -bq[3]])  # conjugate
+    # Rotate (tcp_pos - base_pos) by base_quat_inv
+    dp = tcp_pose[:3] - base_pose[:3]
+    # Quaternion rotation: q * v * q_inv (using matrix form for simplicity)
+    bmat = _quat_to_matrix(np.array([bq_inv[1], bq_inv[2], bq_inv[3], bq_inv[0]]))  # [x,y,z,w] for our func
+    return (bmat @ dp).astype(np.float32)
 
 
 def _obs_state_array(obs: dict[str, Any]) -> np.ndarray | None:
@@ -418,17 +435,30 @@ class XVLAModelServer(PredictModelServer):
                         proprio_np[19] = env_state[19]
             proprio = torch.tensor(proprio_np, device=device).unsqueeze(0)
         else:
-            raw = _obs_state_array(obs)
-            if raw is not None:
-                if len(raw) == dim_proprio:
-                    # 20D state already in X-VLA format [pos3, rot6d6, 0, zeros10]
-                    proprio = torch.tensor(raw, device=device).unsqueeze(0)
-                else:
-                    # Legacy 8D state [pos3, axisangle3, gripper2] — convert
-                    proprio_np = _state_to_xvla_proprio(raw, dim_proprio, euler_state=self._euler_state)
-                    proprio = torch.tensor(proprio_np, device=device).unsqueeze(0)
+            # Try base-relative EE pose (SimplerEnv: base_pose + tcp_pose)
+            base_pose = obs.get("base_pose")
+            tcp_pose = obs.get("tcp_pose")
+            if base_pose is not None and tcp_pose is not None:
+                bp = np.asarray(base_pose, dtype=np.float64)
+                tp = np.asarray(tcp_pose, dtype=np.float64)
+                ee_pos = _compute_ee_pos_wrt_base(bp, tp)
+                # Match official X-VLA SimplerEnv: [pos3, 1,0,0,1,0,0,0, zeros10]
+                proprio_np = np.zeros(dim_proprio, dtype=np.float32)
+                proprio_np[:3] = ee_pos
+                proprio_np[3:10] = [1, 0, 0, 1, 0, 0, 0]  # identity rot6d + gripper
+                proprio = torch.tensor(proprio_np, device=device).unsqueeze(0)
             else:
-                proprio = torch.zeros(1, dim_proprio, dtype=torch.float32, device=device)
+                raw = _obs_state_array(obs)
+                if raw is not None:
+                    if len(raw) == dim_proprio:
+                        # 20D state already in X-VLA format [pos3, rot6d6, 0, zeros10]
+                        proprio = torch.tensor(raw, device=device).unsqueeze(0)
+                    else:
+                        # Legacy 8D state [pos3, axisangle3, gripper2] — convert
+                        proprio_np = _state_to_xvla_proprio(raw, dim_proprio, euler_state=self._euler_state)
+                        proprio = torch.tensor(proprio_np, device=device).unsqueeze(0)
+                else:
+                    proprio = torch.zeros(1, dim_proprio, dtype=torch.float32, device=device)
 
         domain_id = torch.tensor([self.domain_id], dtype=torch.long, device=device)
 

@@ -211,7 +211,17 @@ class SimplerEnvBenchmark(StepBenchmark):
         image = get_image_from_maniskill2_obs_dict(self._env, raw_obs)
         obs = self._build_obs_dict(image)
         if self.send_state:
-            eef = raw_obs.get("agent", {}).get("eef_pos")
+            agent = raw_obs.get("agent", {})
+            extra = raw_obs.get("extra", {})
+            # Send base_pose + tcp_pose so model servers can compute
+            # base-relative EE pose (required by X-VLA, GR00T, etc.)
+            base_pose = agent.get("base_pose")
+            tcp_pose = extra.get("tcp_pose")
+            if base_pose is not None and tcp_pose is not None:
+                obs["base_pose"] = np.asarray(base_pose, dtype=np.float32)
+                obs["tcp_pose"] = np.asarray(tcp_pose, dtype=np.float32)
+            # Also send eef_pos as fallback for simpler model servers
+            eef = agent.get("eef_pos")
             if eef is not None:
                 obs["states"] = np.asarray(eef, dtype=np.float32)
         return obs
