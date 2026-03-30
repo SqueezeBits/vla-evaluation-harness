@@ -130,7 +130,23 @@ for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
   esac
 done
 if $has_save_traj && ! $has_traj_name; then
-  traj_name="$(date -u +%Y%m%d_%H%M%S)"
+  # Query the model server for its name so the trajectory directory includes
+  # the model name, not just a timestamp.  Falls back gracefully.
+  info_args=(-c "$CONFIG")
+  for i in "${!EXTRA_ARGS[@]}"; do
+    if [[ "${EXTRA_ARGS[$i]}" == "--server-url" ]]; then
+      info_args+=(--server-url "${EXTRA_ARGS[$((i+1))]}")
+      break
+    fi
+  done
+  model_name=$(vla-eval server-info "${info_args[@]}" --field model_name 2>/dev/null || true)
+  timestamp="$(date -u +%Y%m%d_%H%M%S)"
+  if [[ -n "$model_name" ]]; then
+    traj_name="${model_name}_${timestamp}"
+  else
+    echo "WARNING: Could not fetch model_name from server, using timestamp only." >&2
+    traj_name="$timestamp"
+  fi
   EXTRA_ARGS+=("--traj-name" "$traj_name")
 fi
 

@@ -505,6 +505,44 @@ def cmd_serve(args: argparse.Namespace) -> None:
     _exec_subprocess(cmd)
 
 
+def cmd_server_info(args: argparse.Namespace) -> None:
+    """Query a running model server and print HELLO metadata."""
+    import anyio
+
+    _setup_logging(getattr(args, "verbose", False))
+
+    url: str | None = getattr(args, "server_url", None)
+    if url is None and getattr(args, "config", None):
+        config = _load_config(args.config)
+        url = config.get("server", {}).get("url")
+    url = url or "ws://localhost:8000"
+
+    from vla_eval.connection import Connection
+
+    async def _query() -> dict[str, Any]:
+        conn = Connection(url, timeout=5.0, max_retries=2)
+        try:
+            await conn.connect()
+            return dict(conn.server_info)
+        finally:
+            await conn.close()
+
+    try:
+        info = anyio.run(_query)
+    except Exception as exc:
+        logger.debug("server-info failed: %s", exc)
+        sys.exit(1)
+
+    field = getattr(args, "field", None)
+    if field:
+        value = info.get(field, "")
+        print(value)
+    else:
+        import json
+
+        print(json.dumps(info, indent=2, default=str))
+
+
 def _discover_shard_groups(config_path: str, *, traj_name: str | None = None) -> dict[str, list[Path]]:
     """Auto-discover shard files from a config YAML, grouped by benchmark name.
 
@@ -676,6 +714,7 @@ def cmd_merge_traj(args: argparse.Namespace) -> None:
 
 def cmd_fix_perms(args: argparse.Namespace) -> None:
     """Fix ownership of Docker-created results via a temporary container."""
+    import shutil
     import subprocess
 
     target = Path(args.path).resolve()
@@ -683,11 +722,13 @@ def cmd_fix_perms(args: argparse.Namespace) -> None:
         logger.error("Directory not found: %s", target)
         sys.exit(1)
     uid, gid = os.getuid(), os.getgid()
-    docker = _find_docker()
+    docker = shutil.which("docker")
+    if docker is None:
+        logger.error("Docker not found. Please install Docker.")
+        sys.exit(1)
     logger.info("Fixing ownership of %s to %d:%d", target, uid, gid)
     subprocess.run(
-        [docker, "run", "--rm", "-v", f"{target}:/target", "alpine",
-         "chown", "-R", f"{uid}:{gid}", "/target"],
+        [docker, "run", "--rm", "-v", f"{target}:/target", "alpine", "chown", "-R", f"{uid}:{gid}", "/target"],
         check=True,
     )
     logger.info("Done.")
@@ -1035,6 +1076,28 @@ Bool args become flags (--use_text_template), others become --key value.
     serve_parser.add_argument("--verbose", "-v", action="store_true")
     serve_parser.set_defaults(func=cmd_serve)
 
+    # server-info command
+    info_parser = sub.add_parser(
+        "server-info",
+        help="Query a running model server for its HELLO metadata",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Connects to a model server, performs a HELLO handshake, and prints
+the server's metadata (model_name, model_server, capabilities, etc.).
+
+examples:
+  vla-eval server-info                              # default ws://localhost:8000
+  vla-eval server-info --server-url ws://host:8001
+  vla-eval server-info -c configs/libero_10.yaml    # reads server.url from config
+  vla-eval server-info --field model_name           # print just one field
+""",
+    )
+    info_parser.add_argument("--config", "-c", default=None, help="Config YAML (reads server.url)")
+    info_parser.add_argument("--server-url", default=None, help="Model server WebSocket URL")
+    info_parser.add_argument("--field", default=None, help="Print only this field's value (e.g. model_name)")
+    info_parser.add_argument("--verbose", "-v", action="store_true")
+    info_parser.set_defaults(func=cmd_server_info)
+
     # merge command
     merge_parser = sub.add_parser(
         "merge",
@@ -1160,7 +1223,9 @@ examples:
         help="Fix ownership of Docker-created results (runs chown via a container)",
     )
     fix_perms_parser.add_argument(
-        "path", nargs="?", default="results",
+        "path",
+        nargs="?",
+        default="results",
         help="Directory to fix (default: results/)",
     )
     fix_perms_parser.set_defaults(func=cmd_fix_perms)
