@@ -175,7 +175,11 @@ def _obs_state_array(obs: dict[str, Any]) -> np.ndarray | None:
     coordinate frame). Falls back to ``states``/``state`` for benchmarks
     that don't provide controller state (CALVIN, SimplerEnv, etc.).
     """
-    raw_state = obs.get("controller_states") or obs.get("states") or obs.get("state")
+    raw_state = obs.get("controller_states")
+    if raw_state is None:
+        raw_state = obs.get("states")
+    if raw_state is None:
+        raw_state = obs.get("state")
     if raw_state is None:
         return None
     return np.asarray(raw_state, dtype=np.float32).flatten()
