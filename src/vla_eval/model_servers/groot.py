@@ -48,6 +48,7 @@ class GR00TModelServer(PredictModelServer):
         video_key: str | None = None,
         action_keys: list[str] | None = None,
         invert_gripper: bool = False,
+        image_resolution: int | None = None,
         *,
         chunk_size: int = 16,
         action_ensemble: str = "newest",
@@ -59,6 +60,7 @@ class GR00TModelServer(PredictModelServer):
         self.video_key = video_key  # None = auto-detect from modality config
         self.action_keys = action_keys
         self.invert_gripper = invert_gripper
+        self.image_resolution = image_resolution
         self._policy = None
         self._modality_config: dict[str, Any] | None = None
         self._state_dims: dict[str, int] = {}
@@ -168,6 +170,10 @@ class GR00TModelServer(PredictModelServer):
             for idx, vk in enumerate(video_keys):
                 if idx < len(img_values):
                     img = np.asarray(img_values[idx], dtype=np.uint8)
+                    if self.image_resolution and img.shape[:2] != (self.image_resolution, self.image_resolution):
+                        import cv2
+
+                        img = cv2.resize(img, (self.image_resolution, self.image_resolution))
                     if img.ndim == 3:
                         img = img[np.newaxis, ...]  # (T=1, H, W, C)
                 else:

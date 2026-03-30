@@ -1,0 +1,8 @@
+# GR00T N1.6 — SimplerEnv Google Robot (official NVIDIA checkpoint)
+# Usage: vla-eval serve --config configs/model_servers/groot/simpler_google_robot.yaml
+script: "src/vla_eval/model_servers/groot.py"
+args:
+  model_path: nvidia/GR00T-N1.6-fractal
+  embodiment_tag: OXE_GOOGLE
+  chunk_size: 16
+  port: 8000

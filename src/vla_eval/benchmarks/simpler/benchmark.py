@@ -195,11 +195,13 @@ class SimplerEnvBenchmark(StepBenchmark):
         assert len(raw_action) == 7, f"Action dimension mismatch: got {len(raw_action)}, expected 7"
 
         # [x, y, z, roll, pitch, yaw, gripper] -> ManiSkill2 format
+        # Rotation passed directly (not converted to axis-angle) matching
+        # official eval pipelines which pass model output as-is to env.step().
         pos = np.array(raw_action[:3])
-        axangle = _euler2axangle(np.array(raw_action[3:6]))
+        rot = np.array(raw_action[3:6])
         gripper = 1.0 if raw_action[6] > 0.5 else -1.0
 
-        env_action = np.concatenate([pos, axangle, [gripper]])
+        env_action = np.concatenate([pos, rot, [gripper]])
         assert self._env is not None
         obs, reward, done, truncated, info = self._env.step(env_action)
 
