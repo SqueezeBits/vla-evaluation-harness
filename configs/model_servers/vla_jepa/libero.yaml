@@ -1,0 +1,9 @@
+# VLA-JEPA — LIBERO checkpoint variant from ginwind/VLA-JEPA/LIBERO
+extends: _base.yaml
+args:
+  checkpoint_variant: LIBERO
+  unnorm_key: franka
+  denorm_mode: minmax
+  observation_params:
+    send_wrist_image: true
+    send_state: true

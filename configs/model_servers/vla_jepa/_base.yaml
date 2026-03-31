@@ -1,0 +1,9 @@
+# VLA-JEPA model server — shared base
+# The published Hugging Face repo stores benchmark-specific variants under
+# subdirectories such as LIBERO/ and SimplerEnv/.
+script: "src/vla_eval/model_servers/vla_jepa.py"
+args:
+  checkpoint: ginwind/VLA-JEPA
+  use_bf16: true
+  chunk_size: 7
+  port: 8000

@@ -1,0 +1,11 @@
+# VLA-JEPA — SimplerEnv bridge checkpoint from ginwind/VLA-JEPA/SimplerEnv
+# Assumption: the harness' SimplerEnv config targets the WidowX Bridge suite,
+# so we use the released oxe_bridge stats by default.
+extends: _base.yaml
+args:
+  checkpoint_variant: SimplerEnv
+  unnorm_key: oxe_bridge
+  chunk_size: 1
+  invert_gripper: false
+  adaptive_ensemble_horizon: 7
+  adaptive_ensemble_alpha: 0.1
