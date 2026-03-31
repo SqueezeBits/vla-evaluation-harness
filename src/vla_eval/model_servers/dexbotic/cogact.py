@@ -75,6 +75,7 @@ class CogACTModelServer(PredictModelServer):
         chunk_size_map: dict[str, int] | None = None,
         camera_keys: list[str] | None = None,
         action_ensemble: str = "newest",
+        image_resolution: int = 224,
         **kwargs: Any,
     ) -> None:
         if chunk_size is not None and chunk_size_map is not None:
@@ -94,10 +95,14 @@ class CogACTModelServer(PredictModelServer):
         self.use_text_template = use_text_template
         self.chunk_size_map = chunk_size_map
         self.camera_keys = camera_keys
+        self.image_resolution = image_resolution
         self._model = None
         self._tokenizer = None
         self._norm_stats = None
         self._device = None
+
+    def get_observation_params(self) -> dict[str, Any]:
+        return {"image_size": [self.image_resolution, self.image_resolution]}
 
     def get_action_spec(self) -> dict[str, DimSpec]:
         return {"actions": RAW}

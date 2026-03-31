@@ -68,11 +68,13 @@ class SimplerEnvBenchmark(StepBenchmark):
         seed: int | None = None,
         send_state: bool = False,
         control_mode: str | None = None,
+        image_size: list[int] | tuple[int, int] | None = None,
     ) -> None:
         super().__init__()
         self.seed = seed
         self.send_state = send_state
         self._control_mode_override = control_mode
+        self.image_size = tuple(image_size) if image_size is not None else None
         self.env_name = env_name
         self.scene_name = scene_name
         self.robot = robot
@@ -117,6 +119,10 @@ class SimplerEnvBenchmark(StepBenchmark):
 
     def _build_obs_dict(self, image: np.ndarray) -> dict[str, Any]:
         """Wrap image and task description into an Observation dict."""
+        if self.image_size is not None and image.shape[:2] != self.image_size:
+            import cv2
+
+            image = cv2.resize(image, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_AREA)
         return {"images": {"primary": image}, "task_description": self._task_description}
 
     # ------------------------------------------------------------------
