@@ -67,10 +67,12 @@ class SimplerEnvBenchmark(StepBenchmark):
         rgb_overlay_path: str | None = None,
         seed: int | None = None,
         send_state: bool = False,
+        control_mode: str | None = None,
     ) -> None:
         super().__init__()
         self.seed = seed
         self.send_state = send_state
+        self._control_mode_override = control_mode
         self.env_name = env_name
         self.scene_name = scene_name
         self.robot = robot
@@ -140,7 +142,7 @@ class SimplerEnvBenchmark(StepBenchmark):
         if self._env is not None:
             self._env.close()
 
-        control_mode = get_robot_control_mode(self.robot, "vla")
+        control_mode = self._control_mode_override or get_robot_control_mode(self.robot, "vla")
         build_kwargs: dict[str, Any] = dict(
             obs_mode="rgbd",
             robot=self.robot,

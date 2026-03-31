@@ -1,0 +1,122 @@
+diff --git a/mani_skill2_real2sim/agents/configs/widowx/defaults.py b/mani_skill2_real2sim/agents/configs/widowx/defaults.py
+index 5e3ef9a..52ff6ff 100644
+--- a/mani_skill2_real2sim/agents/configs/widowx/defaults.py
++++ b/mani_skill2_real2sim/agents/configs/widowx/defaults.py
+@@ -131,6 +131,9 @@ class WidowXDefaultConfig:
+         arm_pd_ee_target_delta_pose_align2 = PDEEPoseControllerConfig(
+             *arm_common_args, frame="ee_align2", use_target=True, **arm_common_kwargs
+         )
++        arm_pd_ee_target_base_pose = PDEEPoseControllerConfig(
++            *arm_common_args, frame="base", use_target=True, use_delta=False, **arm_common_kwargs
++        )
+         arm_pd_ee_target_delta_pose_align2_interpolate_by_planner = PDEEPoseControllerConfig(
+             *arm_common_args,
+             frame="ee_align2",
+@@ -150,6 +153,7 @@ class WidowXDefaultConfig:
+             arm_pd_ee_target_delta_pose_align=arm_pd_ee_target_delta_pose_align,
+             arm_pd_ee_target_delta_pose_align2=arm_pd_ee_target_delta_pose_align2,
+             arm_pd_ee_target_delta_pose_align2_interpolate_by_planner=arm_pd_ee_target_delta_pose_align2_interpolate_by_planner,
++            arm_pd_ee_target_base_pose=arm_pd_ee_target_base_pose,
+         )
+ 
+         # -------------------------------------------------------------------------- #
+@@ -282,18 +286,24 @@ class WidowXSinkCameraSetupConfig(WidowXDefaultConfig):
+     def cameras(self):
+         return [
+             CameraConfig(
+-                uid="3rd_view_camera",  # the camera used for real evaluation for the sink setup
+-                # p=[0.13, 0.27, 1.24],
+-                # q=look_at([0, 0, 0], [-1, -0.45, -1.05], [0, 0, 1]).q,
+-                # actor_uid=None,
+-                p=[-0.00300001, -0.21, 0.39],
+-                q=[-0.907313, 0.0782, -0.36434, -0.194741],
+-                actor_uid="base_link",
++                # uid="3rd_view_camera",  # the camera used for real evaluation for the sink setup
++                # p=[-0.00300001, -0.21, 0.39],
++                # q=[-0.907313, 0.0782, -0.36434, -0.194741],
++                # actor_uid="base_link",
++                # width=640,
++                # height=480,
++                # fov=1.5,  # ignored if intrinsic is passed
++                # near=0.01,
++                # far=10,
++                # intrinsic = np.array([[623.588, 0, 319.501], [0, 623.588, 239.545], [0, 0, 1]])
++                uid="3rd_view_camera",  # the camera used in the Bridge dataset
++                p=[0.00, -0.16, 0.336],
++                q=[0.909182, -0.0819809, 0.347277, 0.214629],
+                 width=640,
+                 height=480,
+-                fov=1.5,  # ignored if intrinsic is passed
+-                near=0.01,
+-                far=10,
+-                intrinsic = np.array([[623.588, 0, 319.501], [0, 623.588, 239.545], [0, 0, 1]])
++                actor_uid="base_link",
++                intrinsic=np.array(
++                    [[623.588, 0, 319.501], [0, 623.588, 239.545], [0, 0, 1]]
++                ),  # logitech C920
+             )
+         ]
+\ No newline at end of file
+diff --git a/mani_skill2_real2sim/agents/controllers/pd_ee_pose.py b/mani_skill2_real2sim/agents/controllers/pd_ee_pose.py
+index 074e154..d693f50 100644
+--- a/mani_skill2_real2sim/agents/controllers/pd_ee_pose.py
++++ b/mani_skill2_real2sim/agents/controllers/pd_ee_pose.py
+@@ -191,6 +191,7 @@ class PDEEPoseController(PDEEPosController):
+ 
+     def compute_target_pose(self, prev_ee_pose_at_base, action):
+         if self.config.use_delta:
++            print(f"here compute delta")
+             delta_pos, delta_rot = action[0:3], action[3:6]
+             delta_quat = Rotation.from_rotvec(delta_rot).as_quat()[[3, 0, 1, 2]]
+             delta_pose = sapien.Pose(delta_pos, delta_quat)
+@@ -221,9 +222,14 @@ class PDEEPoseController(PDEEPosController):
+             else:
+                 raise NotImplementedError(self.config.frame)
+         else:
++            # eular angles transform to quanternion
++            # print(f"here compute no delta")
+             assert self.config.frame == "base", self.config.frame
++            # print(f"receive action {action}")
+             target_pos, target_rot = action[0:3], action[3:6]
+-            target_quat = Rotation.from_rotvec(target_rot).as_quat()[[3, 0, 1, 2]]
++            # target_quat = Rotation.from_rotvec(target_rot).as_quat()[[3, 0, 1, 2]]
++            target_quat = Rotation.from_euler('xyz',target_rot).as_quat()[[3, 0, 1, 2]]
++            # target_quat = action[3:7][[3, 0, 1, 2]]
+             target_pose = sapien.Pose(target_pos, target_quat)
+ 
+         return target_pose
+diff --git a/mani_skill2_real2sim/envs/custom_scenes/base_env.py b/mani_skill2_real2sim/envs/custom_scenes/base_env.py
+index 3599cfc..70f06e0 100644
+--- a/mani_skill2_real2sim/envs/custom_scenes/base_env.py
++++ b/mani_skill2_real2sim/envs/custom_scenes/base_env.py
+@@ -279,15 +279,17 @@ class CustomSceneEnv(BaseEnv):
+             if self.robot_uid in ['widowx', 'widowx_bridge_dataset_camera_setup']:
+                 qpos = np.array([-0.01840777,  0.0398835,   0.22242722,  -0.00460194,  1.36524296,  0.00153398, 0.037, 0.037])
+             elif self.robot_uid == 'widowx_sink_camera_setup':
+-                qpos = np.array([-0.2600599, -0.12875618, 0.04461369, -0.00652761, 1.7033415, -0.26983038, 0.037,
+-                                 0.037])
++                qpos = np.array([-0.01840777,  0.0398835,   0.22242722,  -0.00460194,  1.36524296,  0.00153398, 0.037, 0.037])
++                # qpos = np.array([-0.2600599, -0.12875618, 0.04461369, -0.00652761, 1.7033415, -0.26983038, 0.037, 0.037])
+             else:
+                 raise NotImplementedError(self.robot_uid)
+             
+             if self.robot_uid in ['widowx', 'widowx_bridge_dataset_camera_setup']:
+                 robot_init_height = 0.870
+             elif self.robot_uid == 'widowx_sink_camera_setup':
+-                robot_init_height = 0.85
++                robot_init_height = 0.870 # aligned setup
++                
++                # robot_init_height = 0.85
+             else:
+                 raise NotImplementedError(self.robot_uid)
+             robot_init_rot_quat = [0, 0, 0, 1]
+@@ -314,7 +316,8 @@ class CustomSceneEnv(BaseEnv):
+                 if self.robot_uid in ['widowx', 'widowx_bridge_dataset_camera_setup']:
+                     init_y = 0.028
+                 elif self.robot_uid == 'widowx_sink_camera_setup':
+-                    init_y = 0.070
++                    init_y = 0.028
++                   # init_y = 0.070
+             else:
+                 init_x, init_y = 0.0, 0.0
+             robot_init_xyz = [init_x, init_y, robot_init_height]
