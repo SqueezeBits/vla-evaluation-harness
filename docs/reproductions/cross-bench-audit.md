@@ -623,12 +623,17 @@ STATUS: Not yet evaluated (3 BLOCKERS)
    - Profile has `gripper_threshold=0.5`, official uses 0.7. Currently unused (`output_action_dim=None`), but becomes a bug when action conversion is implemented
    - Fix: set `gripper_threshold=0.7` in robotwin profile
 
-5. **max_steps 400 vs 300** — LOW
+5. **Seed convention: 100000 vs 2000** — LOW
+   - Our benchmark.py:317: `st_seed = 100000 * (1 + seed)`. Official client.py:284: `st_seed = 2000 * (1 + seed)`
+   - Different specific seeds evaluated; with expert check, solvable seed population is the same. Averages converge over 100+ episodes
+
+6. **max_steps 400 vs 300** — LOW
    - Actual termination uses env's `step_lim`, so metadata 400 is a soft cap only
 
 ### Notes
 - 3 BLOCKER issues stem from one root cause: the benchmark was designed for DB-CogACT's qpos action space, while X-VLA uses EE (end-effector) action space with IK.
-- Fix requires: (a) benchmark `action_type` parameter + `endpose` state extraction, (b) X-VLA model server 20D→16D EE conversion.
+- Fix requires: (a) benchmark `action_type` parameter + `endpose` state extraction, (b) X-VLA model server 20D→16D EE conversion with gripper threshold 0.7.
+- `preserve_env_grippers=True` currently fails silently (key mismatch → `_obs_state_array` returns None). After endpose fix, this logic needs re-evaluation.
 - Reported score: 70.0% Easy, 39.0% Hard (50 tasks).
 
 ---
@@ -653,7 +658,9 @@ STATUS: Not yet evaluated (2 BLOCKERS)
 | **Action type to env** | `TASK_ENV.take_action(action)` (default = qpos) | `action_type="qpos"` | Yes | Both use qpos joint position actions |
 | **Action mode** | absolute (from `deploy_policy.yml`) | absolute | Yes | `action_mode: absolute` in StarVLA config |
 | **Gripper handling** | indices 12,13 are discrete (continuous_mask=False) | raw pass-through | Partial | Official treats dims 12,13 as discrete gripper values. Reordering swaps them to positions 6,13. Our benchmark passes raw 14D to env |
-| **Normalization** | `min_max`, `unnorm_key: "new_embodiment"` | TBD | — | StarVLA model server uses `unnorm_key` for action denormalization |
+| **Normalization** | `min_max`, `unnorm_key: "robotwin"` | TBD | — | Official `deploy_policy.yml:12` specifies `unnorm_key: "robotwin"`. StarVLA model server uses `unnorm_key` for action denormalization |
+| **State key** | `"state"` (local, popped before sending to server) | `"joint_state"` (benchmark.py:427) | BLOCKER | Official `model2robotwin_interface.py` reads `obs["joint_action"]["vector"]` into `state` key, but pops it before sending to model server. Our benchmark sends under `"joint_state"`, StarVLA reads `"states"`/`"state"` (starvla.py:328) — key mismatch, state is None |
+| **chunk_size** | 16 (future_action_window_size=15 → chunk=16) | TBD | — | Official training config: `future_action_window_size: 15` for demo_clean, `49` for abs config |
 | **Model server adaptation** | 14D dual-arm output | single-arm 7D only | BLOCKER | starvla.py:331-332 averages grippers to 7D: `state[:6] + mean(state[6:8])`. :347 applies single-gripper conversion `1.0 - 2.0 * actions[:, 6]`. No 14D dual-arm support |
 | **Config** | RoboTwin-specific | not created | BLOCKER | 14 configs in `configs/model_servers/starvla/`, none for RoboTwin |
 | **chunk_size** | from deploy config | TBD | — | |
@@ -667,7 +674,12 @@ STATUS: Not yet evaluated (2 BLOCKERS)
    - Fix: add RoboTwin mode to starvla.py — skip state averaging, output 14D, apply action reordering, discrete gripper handling for dims 12/13
 
 2. **Config not created** — BLOCKER
-   - Need to create `configs/model_servers/starvla/robotwin.yaml` with `model_path: StarVLA/Qwen3-VL-OFT-Robotwin2`, `unnorm_key: "new_embodiment"`, and RoboTwin-specific parameters
+   - Need to create `configs/model_servers/starvla/robotwin.yaml` with `model_path: StarVLA/Qwen3-VL-OFT-Robotwin2`, `unnorm_key: "robotwin"`, `chunk_size: 16`, and RoboTwin-specific parameters
+
+3. **State key mismatch** — BLOCKER
+   - Benchmark sends state under `"joint_state"` (benchmark.py:427), StarVLA reads `obs.get("states", obs.get("state"))` (starvla.py:328) — neither matches `"joint_state"`, so state is None
+   - Note: official eval pops state before sending to model server (`example_copy.pop("state")` at model2robotwin_interface.py:117), so the deployed model may not use state at inference. Whether this is a functional blocker depends on whether the model variant is state-dependent
+   - Root cause: benchmark `make_obs` key `"joint_state"` is inconsistent with its own observation spec (`"state": STATE_JOINT` at benchmark.py:455). This also affects any future model server that reads `"state"` or `"states"`
 
 ### Notes
 - Reported: 50.4% Easy (48 tasks, 50 demos/task). With domain randomization (All checkpoint): 88.2% Easy, 88.3% Hard.
@@ -692,7 +704,7 @@ STATUS: Not yet evaluated (2 BLOCKERS)
 | 10 | GR00T x SimplerEnv | 25% (57.1%) | Not reproduced | 3 (no state, bridge rotation, max_steps) |
 | 11 | DB-CogACT x RoboTwin 2.0 | — (58.5%) | Not yet evaluated | 0 code-level (config: test_num, expert_check) |
 | 12 | X-VLA x RoboTwin 2.0 | — (70.0%/39.0%) | Not yet evaluated | 3 BLOCKERS (action_type ee vs qpos, state source, action conversion) |
-| 13 | StarVLA x RoboTwin 2.0 | — (50.4%) | Not yet evaluated | 2 BLOCKERS (model server single-arm only, config needed) |
+| 13 | StarVLA x RoboTwin 2.0 | — (50.4%) | Not yet evaluated | 3 BLOCKERS (model server single-arm only, config needed, state key mismatch) |
 
 ---
 
