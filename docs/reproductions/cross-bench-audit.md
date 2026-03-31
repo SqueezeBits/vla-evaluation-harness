@@ -527,6 +527,92 @@ STATUS: Not reproduced
 
 ---
 
+## Pair 11: DB-CogACT x RoboTwin 2.0 — Not yet evaluated
+
+STATUS: Not yet evaluated
+
+### Config
+- Server config: `configs/model_servers/db_cogact/robotwin2.yaml`
+- Benchmark config: `configs/robotwin_eval.yaml`
+
+### Pipeline verification
+
+| Item | Official | Ours | Match? | Evidence |
+|------|----------|------|:------:|----------|
+| **Action dimension** | 14D (dual-arm joint positions) | 14D | Yes | robotwin/benchmark.py uses 14D action; dexbotic/cogact.py `_convert_actions` outputs 14D |
+| **Image cameras** | head + left + right (3 cameras) | head + left + right | Yes | robotwin2.yaml: `camera_keys: '["head_camera", "left_camera", "right_camera"]'` |
+| **State/proprio** | joint positions | joint positions | Yes | robotwin/benchmark.py sends joint state |
+| **Checkpoint** | per-task fine-tuned | per-task | Yes | robotwin2.yaml: `Dexmal/robotwin-db-cogact/adjust_bottle` (override per task) |
+| **Protocol** | Protocol A (single-task, 50 clean demos) | Protocol A | Yes | `task_config: demo_clean` |
+| **chunk_size** | 16 | 16 | Yes | robotwin2.yaml |
+| **max_steps** | 300 (RoboTwin default) | 300 | Yes | robotwin/benchmark.py default |
+
+### Discrepancies
+None identified. Per-task checkpoint override needed for each of 4 tasks.
+
+### Notes
+- Only 4 tasks evaluated in the official report (adjust_bottle, grab_roller, place_empty_cup, place_phone_stand).
+- Each task needs a separate server run with the correct checkpoint path.
+- Reported score: 58.5% average (Easy mode).
+
+---
+
+## Pair 12: X-VLA x RoboTwin 2.0 — Not yet evaluated
+
+STATUS: Not yet evaluated
+
+### Config
+- Server config: `configs/model_servers/xvla/robotwin.yaml`
+- Benchmark config: `configs/robotwin_eval.yaml`
+
+### Pipeline verification
+
+| Item | Official | Ours | Match? | Evidence |
+|------|----------|------|:------:|----------|
+| **Action dimension** | 20D raw (dual-arm EE6D) | 20D raw | Partial | xvla.py robotwin profile: `output_action_dim=None` (raw 20D), `preserve_env_grippers=True`. RoboTwin benchmark expects 14D joint positions — conversion unclear |
+| **Image cameras** | head + left + right | head + left + right | Yes | xvla.py:109 `image_keys=("head_camera", "left_camera", "right_camera")` |
+| **domain_id** | 6 | 6 | Yes | robotwin.yaml: `domain_id: 6` |
+| **chunk_size** | 30 | 30 | Yes | robotwin.yaml |
+| **Protocol** | Protocol A (50 tasks, 50 clean demos) | TBD | — | |
+| **Checkpoint** | 2toINF/X-VLA-WidowX | 2toINF/X-VLA-WidowX | Unclear | Same checkpoint as SimplerEnv WidowX — may need a RoboTwin-specific checkpoint |
+
+### Discrepancies
+1. **Action dimension mismatch** — X-VLA outputs 20D (dual-arm EE6D), RoboTwin expects 14D joint positions. The `preserve_env_grippers=True` flag extracts grippers from env state, but the arm-to-joint conversion is unclear.
+2. **Checkpoint** — `2toINF/X-VLA-WidowX` is a Bridge/WidowX checkpoint, not a RoboTwin-specific one. The X-VLA paper reports RoboTwin scores but the correct checkpoint is unknown.
+
+### Notes
+- Reported score: 70.0% Easy, 39.0% Hard (50 tasks, Protocol A).
+- Requires investigation of how X-VLA's 20D EE6D actions map to RoboTwin's 14D joint space.
+
+---
+
+## Pair 13: StarVLA Qwen3-OFT x RoboTwin 2.0 — Not yet evaluated
+
+STATUS: Not yet evaluated
+
+### Config
+- Server config: not yet created (StarVLA RoboTwin config needed)
+- Benchmark config: `configs/robotwin_eval.yaml`
+
+### Pipeline verification
+
+| Item | Official | Ours | Match? | Evidence |
+|------|----------|------|:------:|----------|
+| **Protocol** | Protocol B (multi-task) | TBD | — | StarVLA uses Protocol B (joint training), not Protocol A |
+| **Tasks** | 48 tasks | TBD | — | |
+| **Checkpoint** | Qwen3-VL-OFT (50 demos/task) | TBD | — | |
+
+### Discrepancies
+- Protocol B (multi-task) is not comparable to Protocol A (single-task) results.
+- Server config not yet created.
+- Reported score: 50.4% Easy (Protocol B, 48 tasks).
+
+### Notes
+- StarVLA RoboTwin uses Protocol B — different from DB-CogACT (Protocol A) and X-VLA (Protocol A).
+- Not directly comparable across protocols.
+
+---
+
 ## Summary
 
 | # | Pair | Score (Reported) | Status | Blockers |
@@ -541,6 +627,9 @@ STATUS: Not reproduced
 | 8 | X-VLA x CALVIN | 3.97 (4.43) | Not reproduced | 6 (rot6d, euler-as-aa, gripper, EP_LEN, action format, absolute_action) |
 | 9 | X-VLA x SimplerEnv | 0% (95.8%) | Not reproduced | 5 BLOCKERS (profile missing, euler_offset, no state, action dim, max_steps) |
 | 10 | GR00T x SimplerEnv | 25% (57.1%) | Not reproduced | 3 (no state, bridge rotation, max_steps) |
+| 11 | DB-CogACT x RoboTwin 2.0 | — (58.5%) | Not yet evaluated | 0 (config ready, per-task checkpoint) |
+| 12 | X-VLA x RoboTwin 2.0 | — (70.0%/39.0%) | Not yet evaluated | 2 (action dim, checkpoint) |
+| 13 | StarVLA x RoboTwin 2.0 | — (50.4%) | Not yet evaluated | Protocol B, config needed |
 
 ---
 
