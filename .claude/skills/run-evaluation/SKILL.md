@@ -251,17 +251,17 @@ vla-eval test --all
 
 ### Parallel evaluations of different models
 
-**WARNING**: Never run two evaluations that use the same benchmark config
-and the same `--num-shards` simultaneously. Result files are named by
-benchmark + shard ID (e.g. `LIBEROBenchmark_libero_spatial_shard0of10.json`),
-so two evals writing to the same `results/` directory will silently overwrite
-each other's output. The surviving files will contain results from whichever
-eval finished that shard last — potentially mixing models.
+Shard result files are named by benchmark + shard ID (e.g.
+`LIBEROBenchmark_libero_spatial_shard0of10.json`). If two evals use the
+same benchmark config, shard count, and output directory, they will
+collide. The orchestrator prevents this with a file lock — the second
+eval will **fail immediately** with `FileExistsError` rather than
+silently overwriting results.
 
-To run multiple models against the same benchmark in parallel:
+If you hit this error, either:
 - Use **different output directories** (modify `output_dir` in the config), or
 - Use **different shard counts** (e.g. `--num-shards 10` vs `--num-shards 8`), or
-- **Run sequentially** — finish one model, archive results, then start the next.
+- **Run sequentially** — finish one model, archive/remove results, then start the next.
 
 ### Troubleshooting
 
