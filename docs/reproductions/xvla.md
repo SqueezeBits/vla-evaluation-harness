@@ -76,7 +76,7 @@ See [common-pitfalls.md](common-pitfalls.md) for detailed patterns.
 | **Checkpoint** | `2toINF/X-VLA-WidowX` (official) |
 | **Server config** | [`configs/model_servers/xvla/simpler_widowx.yaml`](../../configs/model_servers/xvla/simpler_widowx.yaml) |
 | **Benchmark config** | [`configs/simpler_all_tasks.yaml`](../../configs/simpler_all_tasks.yaml) |
-| **Results** | [`data/xvla-simpler/`](data/xvla-simpler/) |
+| **Results** | WIP |
 
 Status: **WIP** (pipeline fixes applied, re-evaluation pending).
 

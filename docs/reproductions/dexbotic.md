@@ -9,7 +9,7 @@ Paper: [arxiv 2510.23511](https://arxiv.org/abs/2510.23511) (DexboticVLM) / [arx
 |-----------|:----------:|:--------:|:-------:|
 | LIBERO | **94.7%** | 94.9% | Reproduced |
 | CALVIN ABC→D | **4.02** | 4.06 | Reproduced |
-| SimplerEnv WidowX | **70.8%** | 69.5% | Reproduced |
+| SimplerEnv WidowX | WIP | 69.5% | WIP (needs `simpler_env.make` migration) |
 
 ### LIBERO
 
@@ -61,21 +61,10 @@ Pipeline audit: All items match. No discrepancies.
 | **Checkpoint** | `Dexmal/simpler-db-cogact` (official) |
 | **Server config** | [`configs/model_servers/db_cogact/simpler.yaml`](../../configs/model_servers/db_cogact/simpler.yaml) |
 | **Benchmark config** | [`configs/simpler_all_tasks.yaml`](../../configs/simpler_all_tasks.yaml) |
-| **Results** | [`data/dbcogact-simpler/`](data/dbcogact-simpler/) |
+| **Results** | WIP |
 
-4 tasks × 24 episodes. Reproduced score from seed 0.
-
-| Task | Reproduced | Reported |
-|------|:----------:|:--------:|
-| Put Spoon on Towel | 100.0% | 87.5% |
-| Put Carrot on Plate | 50.0% | 65.3% |
-| Stack Green Cube | 33.3% | 29.2% |
-| Put Eggplant in Basket | 100.0% | 95.8% |
-| **Average** | **70.8%** | **69.5%** |
-
-Pipeline audit: All items match. No discrepancies.
-- `is_done()` fix: Only end episode on `truncated=True`, not `terminated`. See [common-pitfalls.md](common-pitfalls.md#6-environment-semantics).
-- Image resize: `cv2.INTER_AREA` to match reference preprocessing.
+WIP — needs migration to `simpler_env.make()` for correct visual domain matching.
+Previous results used `build_maniskill2_env` with explicit parameters, which may differ from the official `prepackaged_config` environment.
 
 ### RoboTwin 2.0
 
