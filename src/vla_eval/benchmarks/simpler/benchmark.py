@@ -264,6 +264,7 @@ class SimplerEnvBenchmark(StepBenchmark):
                 q_xyzw = matrix_to_quat(ee_in_base[:3, :3])
                 q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
                 # Gripper openness: 1 - closedness. Use env's get_gripper_closedness if available.
+                assert self._env is not None
                 try:
                     closedness = self._env.unwrapped.agent.get_gripper_closedness()
                     gripper_open = 1.0 - float(closedness)
