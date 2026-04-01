@@ -1,0 +1,15 @@
+# FRAPPE model server — RoboTwin handover_mic checkpoint
+# Weight: hhhJB/frappe-robotwin-handover-mic (Hugging Face)
+# Benchmark: RoboTwin 2.0 (SAPIEN, dual-arm qpos control)
+#
+# Other released FRAPPE RoboTwin checkpoints include:
+#   hhhJB/frappe-robotwin-handover-block
+#   hhhJB/frappe-robotwin-pick-dual-bottles
+#   hhhJB/frappe-robotwin-place-object-basket
+#   hhhJB/frappe-robotwin-place-shoe
+#   hhhJB/frappe-robotwin-put-bottles-dustbin
+#   hhhJB/frappe-robotwin-put-object-cabinet
+#   hhhJB/frappe-robotwin-stack-bowls-two
+extends: _base.yaml
+args:
+  checkpoint: hhhJB/frappe-robotwin-handover-mic

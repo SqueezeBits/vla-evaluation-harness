@@ -1,0 +1,21 @@
+# FRAPPE model server — shared RoboTwin base
+#
+# FRAPPE source: https://github.com/OpenHelix-Team/frappe
+# FRAPPE checkpoints: https://huggingface.co/collections/hhhJB/frappe
+#
+# The published checkpoints are task-specific RoboTwin policies.
+# Override `checkpoint` per task as needed.
+script: "src/vla_eval/model_servers/frappe.py"
+args:
+  source_ref: bc97186b9fe0c88ad1b450e1c571ac6ffcdb9c11
+  camera_keys: '["head_camera", "right_camera", "left_camera"]'
+  left_arm_dim: 6
+  right_arm_dim: 6
+  control_frequency: 25
+  chunk_size: 32
+  resize_width: 640
+  resize_height: 480
+  apply_jpeg_reencode: true
+  use_bf16: true
+  compile_experts: false
+  port: 8010
