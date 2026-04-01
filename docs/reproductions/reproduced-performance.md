@@ -10,7 +10,7 @@ Models listed in publication order.
 | Pi0.5 (Oct 2024) | **97.7%** (96.9%) Reproduced | — | — | — | — |
 | DB-CogACT (Nov 2024) | **95.2%** (94.9%) Reproduced | **4.05** (4.06) Reproduced | **72.2%** (69.5%) Reproduced | — | — |
 | OFT (Feb 2025) | 94.0% spatial only (~96.8%) | — | — | — | — |
-| GR00T N1.6 (Mar 2025) | **94.9%** (97.0%) Approximate | — | — | — | — |
+| GR00T N1.6 (Mar 2025) | **94.9%** (97.0%) Approximate | — | **36.5%** (62.1%) Approximate | — | — |
 | X-VLA (Oct 2025) | **97.8%** (98.1%) Reproduced | **4.30** (4.43) Reproduced | **69.8%** (95.8%) Partial | — (88.3%) | — (70.0%/39.0%) |
 
 Format: **reproduced** (reported) verdict. — = not yet evaluated.
@@ -47,11 +47,13 @@ Raw result JSONs: [`data/`](data/).
 | Model | Checkpoint | Spoon | Carrot | Block | Eggplant | **Avg** | Reported | Verdict |
 |-------|-----------|:-----:|:------:|:-----:|:--------:|:-------:|:--------:|:-------:|
 | [DB-CogACT](../../configs/model_servers/db_cogact/simpler.yaml) | `Dexmal/simpler-db-cogact` | 94.4% | 72.2% | 25.0% | 97.2% | **72.2%** | 69.5% | Reproduced (3-seed) |
-| GR00T N1.6 | `nvidia/GR00T-N1.6-bridge` | — | — | — | — | **—** | 62.1%† | Not reproduced‡ |
+| [GR00T N1.6](../../configs/model_servers/groot/simpler_widowx.yaml) | `nvidia/GR00T-N1.6-bridge` | 45.8% | 58.3% | 0.0% | 41.7% | **36.5%** | 62.1%† | Approximate (−20.6pp)‡ |
 | [X-VLA](../../configs/model_servers/xvla/simpler_widowx.yaml) | `2toINF/X-VLA-WidowX` | 91.7% | 91.7% | 29.2% | 66.7% | **69.8%** | 95.8% | Partial (−26pp) |
 
 † GR00T reported on non-standard 7-task set; 4-task subset avg = 57.1%.
-‡ GR00T SimplerEnv requires `SimPolicyWrapper` from Isaac-GR00T; not yet implemented.
+‡ GR00T SimplerEnv uses base-relative EE pose computed from `tcp_pose` (vs NVIDIA's `ee_gripper_link`).
+  Gap likely from link difference + gripper closedness calculation. CALVIN: no checkpoint available.
+  Results: [`data/groot-simpler/`](data/groot-simpler/).
 
 ## SimplerEnv — Google Robot VM
 
