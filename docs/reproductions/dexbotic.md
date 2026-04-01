@@ -24,10 +24,10 @@ Paper: [arxiv 2510.23511](https://arxiv.org/abs/2510.23511) (DexboticVLM) / [arx
 
 | Suite | Reproduced | Reported |
 |-------|:----------:|:--------:|
-| LIBERO-Spatial | 93.8% | 93.8% |
-| LIBERO-Object | 98.4% | 97.8% |
-| LIBERO-Goal | 96.0% | 96.2% |
-| LIBERO-10 | 90.8% | 91.8% |
+| Spatial | 93.8% | 93.8% |
+| Object | 98.4% | 97.8% |
+| Goal | 96.0% | 96.2% |
+| Long | 90.8% | 91.8% |
 | **Average** | **94.7%** | **94.9%** |
 
 Pipeline audit: All 18 verification items match. No discrepancies found.

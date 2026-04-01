@@ -8,11 +8,12 @@ NVIDIA's generalist robot foundation model. [GitHub](https://github.com/NVIDIA/I
 | Benchmark | Reproduced | Reported | Verdict |
 |-----------|:----------:|:--------:|:-------:|
 | LIBERO | **94.9%** | 97.0% | Approximate (−2.1pp) |
-| SimplerEnv WidowX | **30.2%** | 62.1%† | Partial (−26.9pp)‡ |
-| SimplerEnv Google Robot | — | 67.7%† | Not yet evaluated |
+| SimplerEnv WidowX | **37.5%** | 57.1%† | Partial (−19.6pp)‡ |
+| SimplerEnv Google Robot | — | 67.7%†† | Not yet evaluated |
 | CALVIN | — | — | No checkpoint |
 
-† GR00T reports on non-standard task sets (7-task WidowX, 6-task Google Robot).
+† 4-task subset avg (Spoon 64.5, Carrot 65.5, Eggplant 93.0, Block 5.5). Full 7-task avg = 62.1%.
+†† Non-standard 6-task set.
 
 ### LIBERO
 
@@ -52,17 +53,19 @@ Status: **Partial** (several pipeline gaps identified; some fixed, two remaining
 Reported (4-task subset): Spoon 64.5%, Carrot 65.5%, Eggplant 93.0%, Block 5.5% = **57.1% avg**.
 (Full 7-task avg = 62.1%, but includes non-standard open/close drawer tasks.)
 
-Reproduced (4-task): Spoon 70.8%, Carrot 45.8%, Block 0.0%, Eggplant 4.2% = **30.2% avg**.
+Reproduced (4-task, no overlay, 504 steps): Spoon **75.0%**, Carrot **75.0%**, Block 0.0%, Eggplant 0.0% = **37.5% avg**.
 
-Pipeline audit: 6 items verified, 2 remaining gaps:
-1. **State/proprio not sent** (CRITICAL) → **FIXED**: benchmark computes base-relative EE pose from `base_pose + tcp_pose`. Bridge rotation applied in groot.py: `quat_to_matrix(xyzw) @ default_rot.T → euler`.
+Pipeline audit — all critical items fixed:
+1. **State/proprio not sent** (CRITICAL) → **FIXED**: benchmark computes base-relative EE pose from `base_pose + tcp_pose`. Bridge rotation applied in groot.py.
 2. **Bridge rotation correction** (CRITICAL) → **FIXED**: `default_rot = [[0,0,1],[0,1,0],[-1,0,0]]` applied to state euler conversion.
-3. **accumulate_success** (MEDIUM) → **FIXED**: OR-accumulate success across episode. PutSpoon improved 45.8%→70.8%.
-4. **n_action_steps: 16 vs 8** (HIGH) → **NOT FIXED**: Official uses first 8 of 16 predicted actions; ours uses all 16. Needs `chunk_size=8`.
-5. **max_episode_steps: 300 vs 504** (HIGH) → **NOT FIXED**: Official uses 504 (MultiStepWrapper). Needs config update.
+3. **accumulate_success** (MEDIUM) → **FIXED**: OR-accumulate success across episode, matching official `rollout_policy.py`.
+4. **max_episode_steps** (HIGH) → **FIXED**: 504 steps (matching official `MultiStepConfig` default).
+5. **chunk_size** → `chunk_size=1` matching official SimplerEnv README `n_action_steps=1`. (`chunk_size=8` tested but worse — 27% vs 75%).
 6. **Gripper polarity** → Resolved: GR00T bridge [0,1] maps correctly without `invert_gripper`.
 
-‡ PutSpoon (70.8%) exceeds official (64.5%); PutEggplant (4.2%) suffers without rgb_overlay (sink camera env).
+Remaining gap: PutEggplant 0% (official 93%) — sink camera env without rgb_overlay. CALVIN: no checkpoint.
+
+‡ PutSpoon (75.0%) and PutCarrot (75.0%) both exceed official (64.5%, 65.5%). PutEggplant suffers without overlay (sink camera env).
 
 ### SimplerEnv — Google Robot
 

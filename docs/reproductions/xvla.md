@@ -55,7 +55,9 @@ Pipeline audit: All 18 items match. No discrepancies.
 | 3/5 | 87.1% | 88.5% |
 | 4/5 | 81.7% | 84.4% |
 | 5/5 | 73.9% | 78.8% |
-| **Avg Len** | **4.30** | **4.43** |
+| **Avg Len** | **4.30** | **4.43**\* |
+
+\* Per-step values from paper sum to 4.41; official avg_len = 4.43.
 
 Pipeline audit: 6 discrepancies found and fixed before achieving 4.30:
 1. **rot6d interleaved vs contiguous** (CRITICAL) — CALVIN uses interleaved. Fixed: `euler_to_rot6d_interleaved` for calvin profile.

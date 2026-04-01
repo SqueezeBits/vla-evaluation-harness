@@ -8,11 +8,12 @@ Systematic verification that vla-eval reproduces published VLA model scores acro
 |----------|-------|:------:|:------:|:---------:|
 | [openpi](openpi.md) | Pi0.5 | **97.7%** (96.9%) Reproduced | — | — |
 | [Dexbotic](dexbotic.md) | DB-CogACT | **94.7%** (94.9%) Reproduced | **4.02** (4.06) Reproduced | **70.8%** (69.5%) Reproduced |
-| [Isaac-GR00T](groot.md) | GR00T N1.6 | **94.9%** (97.0%) Approximate | — | **30.2%** (62.1%) Partial |
+| [Isaac-GR00T](groot.md) | GR00T N1.6 | **94.9%** (97.0%) Approximate | — | **30.2%** (57.1%†) Partial |
 | [X-VLA](xvla.md) | X-VLA-0.9B | **97.4%** (98.1%) Reproduced | **4.30** (4.43) Reproduced | WIP (95.8%) |
 | [StarVLA](starvla.md) | QwenGR00T | — | — | — |
 
 Format: **reproduced** (reported) verdict. — = no checkpoint or not yet evaluated.
+† 4-task subset; full 7-task avg = 62.1%.
 
 ## Verdict Criteria
 

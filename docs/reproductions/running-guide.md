@@ -18,7 +18,8 @@ How to run reproduction evaluations with vla-eval.
 - At p=0.95: CI ≈ ±1.9pp. At p=0.97: CI ≈ ±1.5pp.
 - **Reproduced**: within 95% CI of reported score.
 - **Approximate**: outside CI but ≤5pp gap.
-- **Not reproduced**: >5pp gap, or known systematic issue.
+- **Partial**: >5pp gap with known cause, or partially fixed pipeline.
+- **Not reproduced**: fundamental pipeline mismatch or failure.
 
 ## How to Run
 

@@ -42,10 +42,11 @@ No checkpoints publicly available in openpi. Available checkpoints are:
 - Base models: `pi0_base`, `pi0_fast_base`, `pi05_base` (OXE pretrained)
 - Fine-tuned: `pi0_fast_droid`, `pi0_droid`, `pi0_aloha_*` (3 variants), `pi05_libero`, `pi05_droid`
 
-`pi0_base` was pretrained on OXE (10k+ hours, including Bridge/WidowX data), so it COULD be evaluated on SimplerEnv in principle. However:
-- Physical Intelligence has never self-reported SimplerEnv scores
-- Third-party attempts to evaluate Pi0 on SimplerEnv (via SimplerEnv-OpenVLA fork) have had reproducibility issues (GitHub issues #13, #28: 0% or 30-40% success rates)
-- `pi0_fast_libero` is a different, lower-performing variant from `pi05_libero`
+`pi0_base` was pretrained on OXE (10k+ hours, including Bridge/WidowX data), so it could be fine-tuned for SimplerEnv in principle. However:
+- Physical Intelligence has never self-reported SimplerEnv scores, nor released a Bridge/WidowX fine-tuned checkpoint.
+- Third-party LoRA fine-tunes exist (`HaomingSong/openpi0-bridge-lora`, from the SimplerEnv-OpenVLA project — **not** an official Pi checkpoint), but others have failed to reproduce their reported scores ([SimplerEnv-OpenVLA #13](https://github.com/DelinQu/SimplerEnv-OpenVLA/issues/13), [#28](https://github.com/DelinQu/SimplerEnv-OpenVLA/issues/28): 0% or 30-40% success).
+- A user fine-tuned `pi05_base` on Bridge data (80K steps, 32×H100) and evaluated on SimplerEnv — results were below expectations ([openpi #799](https://github.com/Physical-Intelligence/openpi/issues/799)).
+- `pi0_fast_libero` is a different, lower-performing variant from `pi05_libero`.
 
 ## Configuration Notes
 
