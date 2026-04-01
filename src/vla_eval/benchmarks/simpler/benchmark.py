@@ -69,11 +69,13 @@ class SimplerEnvBenchmark(StepBenchmark):
         send_state: bool = False,
         control_mode: str | None = None,
         image_size: list[int] | tuple[int, int] | None = None,
+        pass_rotation_raw: bool = False,
     ) -> None:
         super().__init__()
         self.seed = seed
         self.send_state = send_state
         self._control_mode_override = control_mode
+        self._pass_rotation_raw = pass_rotation_raw
         self.image_size = tuple(image_size) if image_size is not None else None
         self.env_name = env_name
         self.scene_name = scene_name
@@ -199,8 +201,9 @@ class SimplerEnvBenchmark(StepBenchmark):
 
         # [x, y, z, roll, pitch, yaw, gripper] -> ManiSkill2 format
         pos = np.array(raw_action[:3])
-        if self._control_mode_override:
-            # Absolute EE control (e.g. X-VLA): rotation passed as euler directly
+        if self._control_mode_override or self._pass_rotation_raw:
+            # Absolute EE control (X-VLA) or raw pass-through (GR00T):
+            # rotation passed directly without euler→axangle conversion.
             rot = np.array(raw_action[3:6])
         else:
             # Default delta control: convert euler → axis-angle for ManiSkill2
@@ -234,10 +237,40 @@ class SimplerEnvBenchmark(StepBenchmark):
             if base_pose is not None and tcp_pose is not None:
                 obs["base_pose"] = np.asarray(base_pose, dtype=np.float32)
                 obs["tcp_pose"] = np.asarray(tcp_pose, dtype=np.float32)
-            # Also send eef_pos as fallback for simpler model servers
+            # Compute base-relative EE pose (8D: pos3+quat4_wxyz+gripper_openness).
+            # Matches NVIDIA's ManiSkill2 fork (youliangtan/ManiSkill2_real2sim).
             eef = agent.get("eef_pos")
             if eef is not None:
                 obs["states"] = np.asarray(eef, dtype=np.float32)
+            elif base_pose is not None and tcp_pose is not None:
+                from vla_eval.rotation import quat_to_matrix, matrix_to_quat
+
+                bp = np.asarray(base_pose, dtype=np.float64).flatten()
+                tp = np.asarray(tcp_pose, dtype=np.float64).flatten()
+
+                # Build 4x4 transforms (ManiSkill2 quaternion: wxyz)
+                def _pose7_to_mat4(p):
+                    m = np.eye(4)
+                    q_wxyz = p[3:7]
+                    q_xyzw = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]])
+                    m[:3, :3] = quat_to_matrix(q_xyzw)
+                    m[:3, 3] = p[:3]
+                    return m
+
+                base_mat = _pose7_to_mat4(bp)
+                tcp_mat = _pose7_to_mat4(tp)
+                ee_in_base = np.linalg.inv(base_mat) @ tcp_mat
+                pos = ee_in_base[:3, 3]
+                q_xyzw = matrix_to_quat(ee_in_base[:3, :3])
+                q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
+                # Gripper openness: 1 - closedness. Use env's get_gripper_closedness if available.
+                try:
+                    closedness = self._env.unwrapped.agent.get_gripper_closedness()
+                    gripper_open = 1.0 - float(closedness)
+                except Exception:
+                    qpos = agent.get("qpos")
+                    gripper_open = float(qpos[-1]) if qpos is not None else 0.0
+                obs["states"] = np.concatenate([pos, q_wxyz, [gripper_open]]).astype(np.float32)
         return obs
 
     def check_done(self, step_result: StepResult) -> bool:

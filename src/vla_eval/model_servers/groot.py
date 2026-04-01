@@ -164,7 +164,7 @@ class GR00TModelServer(PredictModelServer):
         )
 
     def get_observation_params(self) -> dict[str, Any]:
-        params: dict[str, Any] = {"send_wrist_image": True, "send_state": True}
+        params: dict[str, Any] = {"send_wrist_image": True, "send_state": True, "pass_rotation_raw": True}
         if self._max_episode_steps is not None:
             params["max_episode_steps"] = self._max_episode_steps
         return params
