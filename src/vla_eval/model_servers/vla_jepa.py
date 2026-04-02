@@ -50,6 +50,7 @@ import ast
 import json
 import logging
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -267,6 +268,7 @@ class VLAJEPAModelServer(PredictModelServer):
         adaptive_ensemble_alpha: float = 0.0,
         use_bf16: bool = False,
         observation_params: str | dict[str, Any] | None = None,
+        record_dir: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -289,15 +291,51 @@ class VLAJEPAModelServer(PredictModelServer):
         self._action_stats: dict[str, Any] | None = None
         self._adaptive_ensemblers: dict[str, _AdaptiveEnsembler] = {}
 
+        # Recording state (Phase 1 of world model evaluation, see RFC-0008)
+        self.record_dir: Path | None = Path(record_dir) if record_dir else None
+        self._record_episode_dirs: dict[str, Path] = {}  # session_id -> episode dir
+        self._record_tasks: dict[str, str] = {}  # session_id -> task description
+        self._record_obs_buffers: dict[str, list[dict[str, np.ndarray]]] = {}  # session_id -> list of image dicts
+        self._record_inf_buffers: dict[
+            str, list[tuple[int, np.ndarray, np.ndarray]]
+        ] = {}  # session_id -> [(step, action_tokens, norm_actions)]
+        self._record_io: ThreadPoolExecutor | None = None
+        if self.record_dir is not None:
+            self.record_dir.mkdir(parents=True, exist_ok=True)
+            self._record_io = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vla-jepa-recorder")
+            logger.info("Recording enabled: %s", self.record_dir)
+
     def get_observation_params(self) -> dict[str, Any]:
         return dict(self._observation_params)
 
     async def on_episode_start(self, config: dict[str, Any], ctx: SessionContext) -> None:
         self._adaptive_ensemblers.pop(ctx.session_id, None)
+        if self.record_dir is not None:
+            episode_dir = self.record_dir / ctx.episode_id
+            episode_dir.mkdir(parents=True, exist_ok=True)
+            self._record_episode_dirs[ctx.session_id] = episode_dir
+            task = config.get("task", {})
+            self._record_tasks[ctx.session_id] = task.get("name", "")
+            self._record_obs_buffers[ctx.session_id] = []
+            self._record_inf_buffers[ctx.session_id] = []
+            task_meta = {"episode_id": ctx.episode_id, "task": task}
+            (episode_dir / "metadata.json").write_text(json.dumps(task_meta, indent=2))
+            logger.info("Recording episode %s -> %s", ctx.episode_id[:8], episode_dir)
         await super().on_episode_start(config, ctx)
 
     async def on_episode_end(self, result: dict[str, Any], ctx: SessionContext) -> None:
         self._adaptive_ensemblers.pop(ctx.session_id, None)
+        if self.record_dir is not None:
+            sid = ctx.session_id
+            episode_dir = self._record_episode_dirs.pop(sid, None)
+            self._record_tasks.pop(sid, None)
+            obs_buffer = self._record_obs_buffers.pop(sid, None)
+            inf_buffer = self._record_inf_buffers.pop(sid, None)
+            if episode_dir is not None:
+                end_meta = {"result": result, "total_steps": ctx.step}
+                (episode_dir / "result.json").write_text(json.dumps(end_meta, indent=2))
+                if self._record_io is not None and obs_buffer and inf_buffer:
+                    self._record_io.submit(self._flush_episode, episode_dir, obs_buffer, inf_buffer)
         await super().on_episode_end(result, ctx)
 
     def _load_model(self) -> None:
@@ -397,12 +435,13 @@ class VLAJEPAModelServer(PredictModelServer):
             resolved_unnorm_key,
         )
 
-    def predict_batch(self, obs_batch: list[Observation], ctx_batch: list[SessionContext]) -> list[Action]:
-        from PIL import Image as PILImage
+    # ------------------------------------------------------------------
+    # Inference helpers
+    # ------------------------------------------------------------------
 
-        self._load_model()
-        assert self._model is not None
-        assert self._action_stats is not None
+    def _prepare_obs(self, obs_batch: list[Observation]) -> tuple[list[list[Any]], list[str], list[np.ndarray], bool]:
+        """Parse observations into images, instructions, and states."""
+        from PIL import Image as PILImage
 
         def _to_pil(image: Any) -> PILImage.Image:
             if isinstance(image, np.ndarray):
@@ -441,13 +480,15 @@ class VLAJEPAModelServer(PredictModelServer):
         if saw_state and saw_missing_state:
             raise ValueError("Mixed state availability within one VLA-JEPA batch is not supported")
 
-        model_output = self._model.predict_action(
-            batch_images=batch_images,
-            instructions=instructions,
-            state=states if saw_state else None,
-        )
-        normalized_actions_batch = np.asarray(model_output["normalized_actions"], dtype=np.float32)
+        return batch_images, instructions, states, saw_state
 
+    def _postprocess_batch(
+        self,
+        normalized_actions_batch: np.ndarray,
+        ctx_batch: list[SessionContext],
+    ) -> list[Action]:
+        """Denormalize and optionally ensemble a batch of normalized actions."""
+        assert self._action_stats is not None
         outputs: list[Action] = []
         for normalized_actions, ctx in zip(normalized_actions_batch, ctx_batch, strict=True):
             actions = _postprocess_actions(
@@ -468,6 +509,179 @@ class VLAJEPAModelServer(PredictModelServer):
             else:
                 outputs.append({"actions": actions})
         return outputs
+
+    def _predict_action_with_action_tokens(
+        self,
+        batch_images: list[list[Any]],
+        instructions: list[str],
+        states: list[np.ndarray],
+        saw_state: bool,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Run inference like ``predict_action`` but also extract ``action_tokens``.
+
+        Returns ``(normalized_actions, action_tokens)`` where action_tokens
+        are the QwenVL hidden states at ``<|action_{}|>`` positions — the
+        conditioning input for the world model (``vj_predictor``).
+        """
+        import torch
+
+        model = self._model
+        assert model is not None
+
+        train_obs_image_size = getattr(model.config.datasets.vla_data, "image_size", None)
+        if train_obs_image_size:
+            from starVLA.training.trainer_utils.trainer_tools import resize_images
+
+            batch_images = resize_images(batch_images, target_size=train_obs_image_size)
+
+        qwen_inputs = model.qwen_vl_interface.build_qwenvl_inputs(
+            images=batch_images,
+            instructions=instructions,
+            prompt_replace_dict={"{actions}": model.replace_prompt, "{e_actions}": model.embodied_replace_prompt},
+        )
+
+        device = qwen_inputs["input_ids"].device
+
+        # Locate action_tokens (<|action_{}|>) and embodied_action_tokens (<|embodied_action|>)
+        action_indices = torch.isin(
+            qwen_inputs["input_ids"],
+            torch.tensor(model.action_token_ids, device=device),
+        ).nonzero(as_tuple=True)
+
+        embodied_action_indices = torch.isin(
+            qwen_inputs["input_ids"],
+            torch.tensor([model.embodied_action_token_id], device=device),
+        ).nonzero(as_tuple=True)
+
+        # Match the original predict_action() which uses @torch.inference_mode()
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+            qwenvl_outputs = model.qwen_vl_interface(
+                **qwen_inputs,
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            last_hidden = qwenvl_outputs.hidden_states[-1]  # [B, L, H]
+            B, _, H = last_hidden.shape
+
+            action_tokens = last_hidden[action_indices[0], action_indices[1], :].view(B, -1, H)
+            embodied_action_tokens = last_hidden[embodied_action_indices[0], embodied_action_indices[1], :].view(
+                B, -1, H
+            )
+
+        state_tensor = (
+            torch.from_numpy(np.array(states)).to(last_hidden.device, dtype=last_hidden.dtype) if saw_state else None
+        )
+
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float32):
+            pred_actions = model.action_model.predict_action(embodied_action_tokens, state_tensor)
+
+        normalized_actions = pred_actions.cpu().numpy().astype(np.float32)
+        action_tokens_np = action_tokens.cpu().to(torch.float16).numpy()
+
+        return normalized_actions, action_tokens_np
+
+    # ------------------------------------------------------------------
+    # Recording helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_images(obs: Observation) -> dict[str, np.ndarray]:
+        """Extract image arrays from an observation dict."""
+        images: dict[str, np.ndarray] = {}
+        images_source = obs.get("images", {})
+        if isinstance(images_source, dict):
+            for name, img in images_source.items():
+                if isinstance(img, np.ndarray):
+                    images[name] = img
+        elif isinstance(images_source, np.ndarray):
+            images["agentview"] = images_source
+        return images
+
+    @staticmethod
+    def _flush_episode(
+        episode_dir: Path,
+        obs_buffer: list[dict[str, np.ndarray]],
+        inf_buffer: list[tuple[int, np.ndarray, np.ndarray]],
+    ) -> None:
+        """Write all observations and inference data for an episode to disk.
+
+        Produces two files per episode:
+        - ``obs.npz``: keyed as ``{view}_{step:04d}`` for each view and step.
+        - ``inference.npz``: keyed as ``action_tokens_{step:04d}`` and
+          ``normalized_actions_{step:04d}`` for each inference step.
+        """
+        # Observations: one array per (view, step) pair
+        obs_data: dict[str, np.ndarray] = {}
+        for step, images in enumerate(obs_buffer):
+            for view_name, img in images.items():
+                obs_data[f"{view_name}_{step:04d}"] = img
+        obs_data["num_steps"] = np.array(len(obs_buffer))
+        if obs_buffer:
+            obs_data["view_names"] = np.array(sorted(obs_buffer[0].keys()))
+        np.savez_compressed(episode_dir / "obs.npz", **obs_data)  # type: ignore[arg-type]
+
+        # Inference: action_tokens + normalized_actions per inference step
+        inf_data: dict[str, np.ndarray] = {}
+        inf_steps = []
+        for step, action_tokens, normalized_actions in inf_buffer:
+            inf_data[f"action_tokens_{step:04d}"] = action_tokens
+            inf_data[f"normalized_actions_{step:04d}"] = normalized_actions
+            inf_steps.append(step)
+        inf_data["inference_steps"] = np.array(inf_steps)
+        np.savez_compressed(episode_dir / "inference.npz", **inf_data)  # type: ignore[arg-type]
+
+        logger.info(
+            "Flushed episode %s: %d observations, %d inference steps",
+            episode_dir.name[:8],
+            len(obs_buffer),
+            len(inf_buffer),
+        )
+
+    async def on_observation(self, obs: Observation, ctx: SessionContext) -> None:
+        """Buffer every observation for later flush.
+
+        VJEPA2 is a video encoder that requires consecutive frames, so we
+        must record at every step — not just when inference runs (which is
+        every ``chunk_size`` steps due to action chunking).
+        """
+        if self.record_dir is not None:
+            buf = self._record_obs_buffers.get(ctx.session_id)
+            if buf is not None:
+                buf.append(self._extract_images(obs))
+
+        await super().on_observation(obs, ctx)
+
+    # ------------------------------------------------------------------
+    # predict_batch
+    # ------------------------------------------------------------------
+
+    def predict_batch(self, obs_batch: list[Observation], ctx_batch: list[SessionContext]) -> list[Action]:
+        self._load_model()
+        assert self._model is not None
+        assert self._action_stats is not None
+
+        batch_images, instructions, states, saw_state = self._prepare_obs(obs_batch)
+
+        if self.record_dir is not None:
+            # Use custom inference path that also extracts action_tokens
+            normalized_actions_batch, action_tokens_batch = self._predict_action_with_action_tokens(
+                batch_images, instructions, states, saw_state
+            )
+            # Buffer action_tokens for inference steps
+            for i, ctx in enumerate(ctx_batch):
+                buf = self._record_inf_buffers.get(ctx.session_id)
+                if buf is not None:
+                    buf.append((ctx.step, action_tokens_batch[i], normalized_actions_batch[i]))
+        else:
+            model_output = self._model.predict_action(
+                batch_images=batch_images,
+                instructions=instructions,
+                state=states if saw_state else None,
+            )
+            normalized_actions_batch = np.asarray(model_output["normalized_actions"], dtype=np.float32)
+
+        return self._postprocess_batch(normalized_actions_batch, ctx_batch)
 
 
 if __name__ == "__main__":
