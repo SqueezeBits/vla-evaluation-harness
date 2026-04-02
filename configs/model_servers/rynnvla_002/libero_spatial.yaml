@@ -1,0 +1,5 @@
+# RynnVLA-002 — LIBERO-Spatial checkpoint
+extends: _base.yaml
+args:
+  model_subfolder: VLA_model_256/libero_spatial
+  chunk_size: 10

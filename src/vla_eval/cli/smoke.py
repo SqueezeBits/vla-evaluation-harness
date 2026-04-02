@@ -114,6 +114,7 @@ SERVER_REGISTRY: dict[str, str] = {
     "starvla_oft":          "configs/model_servers/starvla/oft_simpler.yaml",
     "starvla_pi":           "configs/model_servers/starvla/pi_simpler.yaml",
     "starvla_fast":         "configs/model_servers/starvla/fast_simpler.yaml",
+    "rynnvla_002":          "configs/model_servers/rynnvla_002/libero_goal.yaml",
 }
 # fmt: on
 
