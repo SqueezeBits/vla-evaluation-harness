@@ -7,12 +7,40 @@ No formal paper. Results from README + assets.
 
 | Benchmark | Reproduced | Reported | Verdict |
 |-----------|:----------:|:--------:|:-------:|
-| LIBERO | — | 96.6% (Qwen3-OFT) | Not yet evaluated |
+| LIBERO Spatial | **85.8%** (Qwen3-OFT) | 97.8% | Partial (1 task 0%, rest 95.3%) |
 | CALVIN ABC→D | — | 3.79 (Q2.5-GR00T) | Not yet evaluated |
 | SimplerEnv WidowX | **66.7%** (Qwen3-GR00T) | 65.3% | Reproduced |
 | SimplerEnv WidowX | **64.6%** (Q2.5-FAST) | 58.6% | Reproduced |
 | SimplerEnv WidowX | 20.8% (Qwen3-OFT) | 42.7% | Not reproduced (env issue) |
 | RoboTwin | — | 50.4% (Qwen3-OFT) | Not yet evaluated |
+
+### LIBERO — Spatial
+
+| | |
+|---|---|
+| **Checkpoint** | `StarVLA/Qwen3-VL-OFT-LIBERO-4in1` (official) |
+| **Server config** | [`configs/model_servers/starvla/libero_qwen3_oft.yaml`](../../configs/model_servers/starvla/libero_qwen3_oft.yaml) |
+| **Benchmark config** | [`configs/libero_spatial.yaml`](../../configs/libero_spatial.yaml) |
+| **Results** | [`data/starvla-libero/`](data/starvla-libero/) |
+
+10 tasks x 50 episodes. `unnorm_type: minmax`, `send_wrist_image: true`.
+
+| Task | Reproduced | Reported |
+|------|:----------:|:--------:|
+| bowl between plate and ramekin | 0% | — |
+| bowl next to ramekin | 84% | — |
+| bowl from table center | 98% | — |
+| bowl on cookie box | 100% | — |
+| bowl in top drawer | 88% | — |
+| bowl on ramekin | 94% | — |
+| bowl next to cookie box | 98% | — |
+| bowl on stove | 98% | — |
+| bowl next to plate | 98% | — |
+| bowl on wooden cabinet | 100% | — |
+| **Average** | **85.8%** | **97.8%** |
+
+First task is 0/50. Excluding it, the remaining 9 tasks average 95.3%.
+Same task reported as failing in [#22](https://github.com/allenai/vla-evaluation-harness/issues/22).
 
 ### SimplerEnv — WidowX VM
 
@@ -107,3 +135,4 @@ Possible causes: wrong checkpoint (Bridge+RT-1 instead of LIBERO-finetuned?).
 
 - [`data/starvla/`](data/starvla/) — Qwen3-GR00T SimplerEnv results + OFT investigation
 - [`data/starvla-fast/`](data/starvla-fast/) — Q2.5-FAST SimplerEnv results
+- [`data/starvla-libero/`](data/starvla-libero/) — Qwen3-OFT LIBERO-Spatial results
