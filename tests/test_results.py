@@ -65,7 +65,9 @@ def test_infra_errors_excluded_from_metrics():
 def test_all_episodes_errored():
     """When all episodes are infra errors, metrics should be absent."""
     collector = ResultCollector("bench", mode="sync", metric_keys={"success": "mean"})
-    collector.record("task_a", {"episode_id": 0, "metrics": {"success": False}, "failure_reason": "server_unreachable"})
+    collector.record(
+        "task_a", {"episode_id": 0, "metrics": {"success": False}, "failure_reason": "server_unreachable"}
+    )
     collector.record("task_a", {"episode_id": 1, "metrics": {"success": False}, "failure_reason": "exception"})
 
     task = collector.get_task_result("task_a")
@@ -205,19 +207,29 @@ def test_merge_excludes_infra_errors():
     shard0 = _make_shard(
         0,
         2,
-        [{"task": "A", "episodes": [
-            {"episode_id": 0, "metrics": {"success": True}, "steps": 10},
-            {"episode_id": 2, "metrics": {"success": False}, "failure_reason": "timeout"},
-        ]}],
+        [
+            {
+                "task": "A",
+                "episodes": [
+                    {"episode_id": 0, "metrics": {"success": True}, "steps": 10},
+                    {"episode_id": 2, "metrics": {"success": False}, "failure_reason": "timeout"},
+                ],
+            }
+        ],
         metric_keys=mk,
     )
     shard1 = _make_shard(
         1,
         2,
-        [{"task": "A", "episodes": [
-            {"episode_id": 1, "metrics": {"success": False}, "steps": 20},
-            {"episode_id": 3, "metrics": {"success": False}, "failure_reason": "exception"},
-        ]}],
+        [
+            {
+                "task": "A",
+                "episodes": [
+                    {"episode_id": 1, "metrics": {"success": False}, "steps": 20},
+                    {"episode_id": 3, "metrics": {"success": False}, "failure_reason": "exception"},
+                ],
+            }
+        ],
         metric_keys=mk,
     )
 

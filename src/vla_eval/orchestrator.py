@@ -307,7 +307,7 @@ class Orchestrator:
                     except ConnectionError:
                         logger.error("Reconnect failed, aborting benchmark")
                         return self._save_results(collector, cfg, partial=True, server_info=conn.server_info)
-                except Exception as exc:
+                except Exception:
                     logger.exception(
                         "  [%d/%d] %s ep%d: ERROR",
                         item_idx + 1,
