@@ -51,7 +51,7 @@ Wait for the `"Model ready, starting server on ws://..."` log before proceeding.
 
 **Remote serving via slurm** (when model needs GPUs on a different node):
 ```bash
-srun --gres=gpu:1 --job-name=model-serve \
+srun --gres=gpu:1 --mem=32G --job-name=model-serve \
   bash -c "uv run vla-eval serve -c configs/model_servers/<model>.yaml" &
 ```
 Check the allocated node with `squeue`, verify with `curl -s http://<node>:8000/config`, then use `--server-url ws://<node>:8000` for benchmark runs. Cancel with `scancel` when done.
