@@ -160,24 +160,11 @@ Shard result files are named by benchmark + shard count. If two evals share the 
 
 ## Monitoring shard progress
 
-Each shard writes a `.progress` file that updates after every episode:
+Each shard writes a `.progress` file that updates after every episode. Use `watch` for a live dashboard:
 ```bash
-# View all shard progress at a glance
-cat results/*.progress 2>/dev/null | python3 -c "
-import sys, json
-total_done = total_all = total_err = 0
-for line in sys.stdin:
-    p = json.loads(line)
-    total_done += p['completed']; total_all += p['total']; total_err += p['errors']
-print(f'{total_done}/{total_all} episodes ({total_err} errors)')
-"
-
-# Or just check raw files
-cat results/*.progress
-
-# Count finished shards (progress file is removed when result JSON is written)
-ls results/*shard*of*.json 2>/dev/null | wc -l
+watch -n 2 'for f in results/*.progress; do echo "$(basename $f .progress): $(cat $f)"; done; echo "---"; echo "Done: $(ls results/*shard*of*.json 2>/dev/null | wc -l) shards"'
 ```
+Progress files are removed automatically when the shard finishes and writes its result JSON. Lock files are also cleaned up on completion.
 
 ## Troubleshooting
 

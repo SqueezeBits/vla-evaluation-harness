@@ -94,7 +94,7 @@ class Orchestrator:
         return all_results
 
     def _release_file_lock(self) -> None:
-        """Release the shard output file lock if held."""
+        """Release the shard output file lock (lock file is auto-deleted by filelock)."""
         if self._output_file_lock is not None:
             self._output_file_lock.release()
             self._output_file_lock = None
