@@ -1,0 +1,13 @@
+# WMVLA model server — shared base
+#
+# Baseline Latent World Model VLA with future tokens.
+# Extends SimVLA; installs the simvla package via pip instead of cloning.
+
+script: "src/vla_eval/model_servers/wmvla.py"
+args:
+  smolvlm_model: HuggingFaceTB/SmolVLM-500M-Instruct
+  pkg_url: "git+https://github.com/SqueezeBits/simvla.git"
+  pkg_rev: dd52bd2d716a93f11d675e0e10c3a4d9fcf1db8f
+  image_size: 384
+  chunk_size: 10
+  port: 8000

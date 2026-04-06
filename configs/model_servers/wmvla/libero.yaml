@@ -1,0 +1,9 @@
+# WMVLA — LIBERO evaluation
+#
+# Usage: vla-eval serve --config configs/model_servers/wmvla/libero.yaml
+
+extends: _base.yaml
+args:
+  checkpoint: junhalee/simvla-libero-small-d2b-it200K
+  norm_stats_subdir: norm_stats
+  norm_stats_filename: libero_norm.json
