@@ -1,0 +1,5 @@
+# RynnVLA-002 — LIBERO-Long (libero_10) checkpoint
+extends: _base.yaml
+args:
+  model_subfolder: VLA_model_256/libero_10
+  chunk_size: 10

@@ -1,0 +1,11 @@
+# RynnVLA-002 VLA server — shared base
+# Reference repo: https://github.com/alibaba-damo-academy/RynnVLA-002
+# Default prompt/input layout matches the released LIBERO checkpoints:
+#   2-frame history, third-person + wrist images, and proprio state.
+script: "src/vla_eval/model_servers/rynnvla_002.py"
+args:
+  model_hub: Alibaba-DAMO-Academy/RynnVLA-002
+  history_spec: his_2_third_view_wrist_w_state
+  tokenizer_model: Alpha-VLLM/Lumina-mGPT-7B-768
+  chameleon_tokenizer_hub: seliny2/Chameleon_7B_mGPT
+  port: 8000
