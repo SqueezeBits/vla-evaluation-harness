@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") -c <config> [-n <num_shards>] [-o <output>]
+Usage: $(basename "$0") -c <config> [-n <num_shards>] [-o <output>] [--no-docker]
 
 Run a benchmark in parallel shards and merge results.
 
@@ -11,6 +11,7 @@ Options:
   -c <config>       Config YAML file (required)
   -n <num_shards>   Number of shards (default: 50)
   -o <output>       Output file for merged results (default: results/<config_name>.json)
+  --no-docker       Run benchmark on host instead of inside Docker
   -h                Show this help
 EOF
   exit "${1:-0}"
@@ -19,6 +20,17 @@ EOF
 CONFIG=""
 NUM_SHARDS=50
 OUTPUT=""
+NO_DOCKER=0
+
+# Extract long options before handing the rest to getopts.
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --no-docker) NO_DOCKER=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
 
 while getopts "c:n:o:h" opt; do
   case "$opt" in
@@ -56,7 +68,13 @@ trap cleanup EXIT
 echo "Config:     $CONFIG"
 echo "Shards:     $NUM_SHARDS"
 echo "Output:     $OUTPUT"
+echo "No Docker:  $([[ "$NO_DOCKER" == 1 ]] && echo yes || echo no)"
 echo ""
+
+RUN_EXTRA=()
+if [[ "$NO_DOCKER" == 1 ]]; then
+  RUN_EXTRA+=(--no-docker)
+fi
 
 # Check for existing shard results
 existing=$(CONFIG="$CONFIG" NUM_SHARDS="$NUM_SHARDS" python3 -c "
@@ -91,7 +109,7 @@ echo "Launching ${NUM_SHARDS} shards..."
 
 pids=()
 for i in $(seq 0 $((NUM_SHARDS - 1))); do
-  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" &
+  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" ${RUN_EXTRA[@]+"${RUN_EXTRA[@]}"} &
   pids+=($!)
 done
 
