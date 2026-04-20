@@ -96,14 +96,19 @@ See `benchmarks/libero/` for a complete reference implementation.
 
 ## Adding a Model Server
 
-1. Create `src/vla_eval/model_servers/<name>.py`
-2. Subclass `ModelServer` from `model_servers/base.py` (or `PredictModelServer` from `model_servers/predict.py` for the common blocking-inference pattern)
-3. Implement `predict(obs, ctx) -> dict` (`PredictModelServer`) or `on_observation(obs, ctx)` (`ModelServer`)
-4. Reference via import string in config YAML
-5. Add a config YAML in `configs/model_servers/`
-6. Smoke-test: `vla-eval test -c configs/model_servers/<name>.yaml` (launches the server, sends dummy observations from a StubBenchmark, checks for actions — requires `uv` + GPU + model weights but no simulation environment)
+1. Create `src/vla_eval/model_servers/<name>.py` as a **uv script** with [PEP 723](https://peps.python.org/pep-0723/) inline metadata
+2. Subclass `PredictModelServer` from `model_servers/predict.py` (or `ModelServer` from `model_servers/base.py` for advanced async use cases)
+3. Implement `predict(obs, ctx) -> dict` — lazy-load the model in `_load_model()`, never in `__init__()`
+4. Use `run_server()` for the CLI entrypoint — **do not write manual argparse**:
+   ```python
+   if __name__ == "__main__":
+       from vla_eval.model_servers.serve import run_server
+       run_server(MyModelServer)
+   ```
+5. Add config YAML(s) in `configs/model_servers/<name>/` (subdirectory per model; use `extends: _base.yaml` for shared settings)
+6. Smoke-test: `vla-eval test -c configs/model_servers/<name>/<name>.yaml`
 
-See `model_servers/dexbotic/cogact.py` for a complete reference implementation.
+See `model_servers/cogact.py` for a complete reference implementation.
 
 ## Config Conventions
 

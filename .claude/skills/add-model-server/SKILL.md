@@ -34,13 +34,15 @@ Create `src/vla_eval/model_servers/<name>.py` as a **uv script** with PEP 723 in
 # ]
 #
 # [tool.uv.sources]
-# vla-eval = { path = "../../.." }
-# <model-package> = { git = "https://github.com/org/repo.git", branch = "main" }
+# vla-eval = { path = "../../..", editable = true }
+# <model-package> = { git = "https://github.com/org/repo.git", rev = "<commit-sha>" }
+#
+# [tool.uv]
+# exclude-newer = "<YYYY-MM-DD>T00:00:00Z"
 # ///
 
 from __future__ import annotations
 
-import argparse
 import logging
 from typing import Any
 
@@ -49,7 +51,6 @@ from PIL import Image as PILImage
 
 from vla_eval.model_servers.base import SessionContext
 from vla_eval.model_servers.predict import PredictModelServer
-from vla_eval.model_servers.serve import serve
 from vla_eval.specs import DimSpec
 from vla_eval.types import Action, Observation
 
@@ -110,33 +111,22 @@ class MyModelServer(PredictModelServer):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="<Model> server (uv script)")
-    parser.add_argument("--checkpoint", required=True, help="HF model ID or local path")
-    parser.add_argument("--chunk_size", type=int, default=None)
-    parser.add_argument("--action_ensemble", default="newest")
-    parser.add_argument("--max_batch_size", type=int, default=1)
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--verbose", "-v", action="store_true")
-    args = parser.parse_args()
+    from vla_eval.model_servers.serve import run_server
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-    )
-
-    server = MyModelServer(
-        args.checkpoint,
-        chunk_size=args.chunk_size,
-        action_ensemble=args.action_ensemble,
-        max_batch_size=args.max_batch_size,
-    )
-
-    logger.info("Pre-loading model...")
-    server._load_model()
-    logger.info("Model ready, starting server on ws://%s:%d", args.host, args.port)
-    serve(server, host=args.host, port=args.port)
+    run_server(MyModelServer)
 ```
+
+### `run_server()` — standard CLI entrypoint
+
+`run_server(MyModelServer)` auto-generates argparse from the `__init__` signature, sets up logging, pre-loads the model (via `_load_model()` if present), and starts the WebSocket server. **Always use this instead of manual argparse.** It auto-discovers:
+- All `__init__` parameters as `--flag` CLI arguments (bool → `--flag/--no-flag`, list → JSON string)
+- Standard flags: `--host`, `--port`, `--address`, `--verbose`
+
+### PEP 723 metadata conventions
+
+- `vla-eval` source must use `editable = true`
+- Pin a git `rev` (commit SHA) for reproducibility, not `branch`
+- Set `exclude-newer` to the date dependencies were last verified
 
 ## PredictModelServer features
 
@@ -195,12 +185,12 @@ Use `PredictModelServer` for standard request-response models (95% of cases). Us
 
 ## 3. Create config YAML
 
-Create `configs/model_servers/<name>.yaml`:
+Create configs in a subdirectory `configs/model_servers/<name>/`:
 
 ```yaml
+# configs/model_servers/<name>/<name>.yaml
 # <Model Name> model server — <benchmark> checkpoint
 # Weight: <HuggingFace model ID>
-# Benchmark: <target benchmark>
 
 script: "src/vla_eval/model_servers/<name>.py"
 args:
@@ -209,7 +199,22 @@ args:
   port: 8000
 ```
 
-The CLI runs this via `vla-eval serve -c configs/model_servers/<name>.yaml`, which translates to `uv run <script> --checkpoint <value> --chunk_size <value> --port <value>`.
+For multiple benchmark-specific configs, use `extends` to inherit from a shared base:
+
+```yaml
+# configs/model_servers/<name>/_base.yaml
+script: "src/vla_eval/model_servers/<name>.py"
+args:
+  port: 8000
+
+# configs/model_servers/<name>/libero.yaml
+extends: _base.yaml
+args:
+  checkpoint: org/model-libero
+  chunk_size: 16
+```
+
+The `extends` key deep-merges `args` from the base config. The CLI runs this via `vla-eval serve -c configs/model_servers/<name>/<name>.yaml`.
 
 ## 4. Verify
 
