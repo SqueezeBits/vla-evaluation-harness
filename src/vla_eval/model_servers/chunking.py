@@ -81,6 +81,10 @@ class ActionChunkBuffer:
             return self._queue.popleft()
         return None
 
+    def __len__(self) -> int:
+        """Number of actions still queued (used to decide when to replan)."""
+        return len(self._queue)
+
     @property
     def empty(self) -> bool:
         return len(self._queue) == 0

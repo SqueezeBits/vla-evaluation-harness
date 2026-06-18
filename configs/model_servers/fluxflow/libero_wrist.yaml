@@ -1,0 +1,26 @@
+# FluxFlow LIBERO rollout — WRIST-CAMERA variant.
+#
+# Extends the no-wrist baseline (libero.yaml) and flips on wrist-camera
+# conditioning: the benchmark sends the LIBERO wrist cam, which Flux2 takes as an
+# extra reference (Image 3, after source=1 and past-flow=2), and the prompt's
+# {wrist_clause} is filled to match. Mirrors the Flux LoRA's --use_wrist_ref
+# training recipe (fluxflow configs/best_all_wrist.yaml + prompted_v3_uv).
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_wrist.yaml
+#
+# Only the fields that differ from the baseline are listed; everything else
+# (idm_dir, base_model, execute_size, past_flow recipe, overlays, port, ...) is
+# inherited from libero.yaml via `extends`.
+
+extends: libero.yaml
+args:
+  # MUST be the LoRA trained with --use_wrist_ref (configs/best_all_wrist.yaml).
+  # The IDM is unchanged (wrist only conditions Flux2's flow), so idm_dir is
+  # inherited. Point this at your wrist-trained checkpoint (local dir or Hub id).
+  flux_ckpt: junhalee/flux2-flow-rgb-wrist-lora-512-bs32x4 # TODO: set to the real wrist LoRA
+  # Feed the wrist cam as Image 3 and fill the prompt's {wrist_clause}.
+  use_wrist_ref: true
+  # The wrist recipe trains on the prompted_v3_uv template (BFL-guide caption
+  # framing, uv colormap, <robot_flow> trigger). Use v3_videojam instead only if
+  # the LoRA trained on the HSV encoding (and set flow_repr: videojam to match).
+  prompt_template: v3_uv

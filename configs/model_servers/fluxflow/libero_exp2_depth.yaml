@@ -1,0 +1,49 @@
+# FluxFlow LIBERO rollout — exp2: DEPTH IDM input (source + depth + flow).
+#
+# IDM trained with fluxflow configs/idm_exp2_depth.yaml: input_mode
+# source_depth_flow, so it consumes agentview (source) + a colormapped DEPTH
+# image (in place of the wrist) + the generated flow. Depth is an IDM stream
+# only — it does NOT condition Flux2 — so the whole Flux recipe (flux_ckpt,
+# prompt_template v2, past_flow=gt, flow_repr uv, execute_size, overlays) is
+# inherited from the baseline unchanged. The server reads input_mode from the
+# IDM config.json and, each step, runs the DA3 depth model on the agentview and
+# applies the depth Representation below to build the depth image the IDM eats.
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_exp2_depth.yaml
+#
+# Requires the DA3 depth extractor (`fluxflow[depth]`: xformers +
+# depth-anything-3). Because depth-anything-3 pins numpy<2 and pulls
+# open3d/pycolmap, install it into a dedicated venv (that also has vla-eval +
+# fluxflow) and serve with that interpreter — see the header in fluxflow.py.
+
+extends: libero.yaml
+args:
+  # MUST be the IDM trained from idm_exp2_depth.yaml (input_mode
+  # source_depth_flow). The depth path turns on automatically when config.json
+  # input_mode is depth_flow or source_depth_flow.
+  idm_dir: junhalee/idm-source_depth_flow-bs512-it34K # TODO: set to the real exp2 IDM checkpoint (local step-N dir or Hub id)
+  flux_ckpt: junhalee/flux2-flow-rgb-wrist-lora-512-bs32x4
+  # Depth Representation — MUST match the training recipe in idm_exp2_depth.yaml
+  # (depth_repr depth_colormap, depth_cmap turbo, depth_power 0.5). Only
+  # depth_colormap is deployable online: depth_delta / depth_stack need a
+  # future-frame depth that doesn't exist at rollout time, and the server
+  # rejects them. depth_invert / depth_clip_pct stay at the training defaults
+  # (true / (2,98)), inherited from the server.
+  depth_repr: depth_colormap
+  depth_cmap: turbo
+  depth_power: 0.5
+  # DA3 monocular depth model. compute_res must be divisible by 14 (DA3's ViT
+  # patch size); 504 is the precompute default. focal_px=0 keeps DA3's
+  # focal-normalized output (the depth Representation normalizes per-frame, so
+  # the absolute scale is irrelevant) — matches scripts/precompute_depth.py.
+  depth_model: da3
+  depth_model_name: da3metric-large
+  depth_compute_res: 504
+  depth_focal_px: 0.0
+  # store_res of the depth cache the IDM trained on (precompute_depth.py
+  # --store_res). The server downsamples the raw metric depth to this res BEFORE
+  # the colormap — matching training's downsample-then-colormap order — so the
+  # depth image the IDM sees is identical to train time. Keep == the IDM
+  # image_size (256 for idm_exp2/idm_exp4). Default is already 256.
+  depth_store_res: 256
+  prompt_template: v3_uv

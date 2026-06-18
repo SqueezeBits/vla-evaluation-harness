@@ -1,0 +1,25 @@
+# FluxFlow LIBERO rollout — exp4: DEPTH IDM input, NO source (depth + flow).
+#
+# IDM trained with fluxflow configs/idm_exp4_depth_nosrc.yaml: input_mode
+# depth_flow — identical to exp2 (source_depth_flow) except the agentview RGB
+# ("source") is dropped from the IDM's model input, so the IDM consumes only the
+# colormapped depth + the generated flow (+ proprio). Everything else matches
+# exp2: depth is an IDM-only stream (it never conditions Flux2), and the depth
+# Representation params are the same. The server reads input_mode from the IDM
+# config.json and feeds depth but not source to the IDM automatically.
+#
+# Only idm_dir differs from libero_exp2_depth.yaml — the depth recipe and the
+# whole inherited Flux recipe are shared via `extends`. (The agentview is still
+# decoded and fed to Flux2 as Image 1; "no source" drops it from the IDM input,
+# not from the flow generator.)
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_exp4_depth_nosrc.yaml
+#
+# Requires the DA3 depth extractor (`fluxflow[depth]`) in a dedicated venv — see
+# the header in fluxflow.py / libero_exp2_depth.yaml.
+
+extends: libero_exp2_depth.yaml
+args:
+  # MUST be the IDM trained from idm_exp4_depth_nosrc.yaml (input_mode
+  # depth_flow). The no-source mode is auto-detected from config.json.
+  idm_dir: junhalee/idm-depth_flow-bs512-it50K # TODO: set to the real exp4 IDM checkpoint (local step-N dir or Hub id)

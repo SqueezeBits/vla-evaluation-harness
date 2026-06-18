@@ -1,0 +1,43 @@
+# FluxFlow LIBERO rollout — DEPTH IDM-INPUT variant.
+#
+# Extends the no-wrist baseline (libero.yaml) for an IDM trained with a depth
+# input mode (--input_mode depth_flow | source_depth_flow). Depth is an IDM
+# stream only — it does NOT condition Flux2 — so the Flux recipe (flux_ckpt,
+# past_flow, prompt_template) is inherited unchanged. The server auto-detects
+# the depth mode from the IDM config.json and, at each step, runs the DA3 depth
+# model on the agentview and applies the depth Representation below to produce
+# the depth image the IDM consumes.
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_depth.yaml
+#
+# Requires the DA3 depth extractor (`fluxflow[depth]`: xformers +
+# depth-anything-3). Because depth-anything-3 pins numpy<2 and pulls
+# open3d/pycolmap, install it into a dedicated venv (that also has vla-eval +
+# fluxflow) and serve with that interpreter — see the header in fluxflow.py.
+#
+# Only the fields that differ from the baseline are listed; everything else is
+# inherited from libero.yaml via `extends`.
+
+extends: libero.yaml
+args:
+  # MUST be an IDM checkpoint trained with a depth input mode. The depth path
+  # turns on automatically when its config.json input_mode is depth_flow or
+  # source_depth_flow.
+  idm_dir: /path/to/depth_idm_checkpoint # TODO: set to the real depth IDM dir
+
+  # Depth Representation — MUST match the IDM's training recipe
+  # (train_idm --depth_repr / --depth_cmap / --depth_power). Only depth_colormap
+  # is deployable online: depth_delta / depth_stack need a future-frame depth
+  # that doesn't exist at rollout time, and the server rejects them.
+  depth_repr: depth_colormap
+  depth_cmap: turbo
+  depth_power: 1.0
+  depth_invert: true
+  # DA3 monocular depth model. compute_res must be divisible by 14 (DA3's ViT
+  # patch size); 504 is the precompute default. focal_px=0 keeps DA3's
+  # focal-normalized output (the depth Representation normalizes per-frame, so
+  # the absolute scale is irrelevant) — matches scripts/precompute_depth.py.
+  depth_model: da3
+  depth_model_name: da3metric-large
+  depth_compute_res: 504
+  depth_focal_px: 0.0

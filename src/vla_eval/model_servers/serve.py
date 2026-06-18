@@ -43,6 +43,29 @@ from vla_eval.protocol.messages import Message, MessageType, make_hello_payload,
 
 logger = logging.getLogger(__name__)
 
+
+class _DropEmptyProbeHandshakeErrors(logging.Filter):
+    """Silence ``websockets.server`` "opening handshake failed" ERRORs that come
+    from bare TCP port probes (platform health-checks that connect and close
+    without sending any data).
+
+    Such a probe surfaces as an ``InvalidMessage`` whose cause chain bottoms out
+    in an ``EOFError`` ("stream ends after 0 bytes" / "connection closed while
+    reading HTTP request line"). We drop only those records; a genuine handshake
+    failure from a real client fails some other way and is kept.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging API name
+        exc = record.exc_info[1] if record.exc_info else None
+        seen: set[int] = set()
+        while exc is not None and id(exc) not in seen:
+            if isinstance(exc, EOFError):
+                return False
+            seen.add(id(exc))
+            exc = exc.__cause__ or exc.__context__
+        return True
+
+
 # Thread pool for CPU-bound work (msgpack/base64 decoding).
 # Default anyio limit (40) is too low when 50+ shards send observations concurrently.
 _DECODE_LIMITER = anyio.CapacityLimiter(max(128, (os.cpu_count() or 8) * 16))
@@ -278,6 +301,12 @@ async def serve_async(
     backpressure_threshold: int = 4,
 ) -> None:
     """Start a WebSocket server wrapping the given ModelServer."""
+    # Drop the ERROR spam from bare TCP port probes (platform health-checks that
+    # open and close port 8000 without sending any data); real handshake errors
+    # are kept. Idempotent — only add the filter once.
+    ws_logger = logging.getLogger("websockets.server")
+    if not any(isinstance(f, _DropEmptyProbeHandshakeErrors) for f in ws_logger.filters):
+        ws_logger.addFilter(_DropEmptyProbeHandshakeErrors())
     logger.info("Starting model server on ws://%s:%d", host, port)
     logger.info("HTTP config endpoint at http://%s:%d/config", host, port)
 

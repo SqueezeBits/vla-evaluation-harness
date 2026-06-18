@@ -2,9 +2,10 @@
 # requires-python = "~=3.11"
 # dependencies = [
 #     "vla-eval",
+#     "simvla @ git+https://github.com/SqueezeBits/simvla.git@ff06d626325292cd9682878e82124161c0c3af59",
 #     "torch>=2.2",
 #     "torchvision>=0.17",
-#     "transformers>=4.57",
+#     "transformers>=4.57,<4.60",
 #     "pillow>=9.0",
 #     "numpy>=1.24",
 #     "safetensors",
@@ -24,24 +25,31 @@
 # vla-eval = { path = "../../..", editable = true }
 #
 # [tool.uv]
-# exclude-newer = "2026-02-24T00:00:00Z"
+# override-dependencies = [
+#     "torch>=2.2.1,<2.8",
+#     "torchvision>=0.21,<0.23",
+#     "huggingface_hub>=0.34,<1.0",
+# ]
 # ///
-"""SimVLA model server — SmolVLM-based VLA with action chunking.
+"""WMVLA model server — Baseline Latent World Model VLA with future tokens.
 
-SimVLA uses a SmolVLM vision-language backbone with a continuous action head.
-It accepts two camera views (primary + wrist) and 8D proprioceptive state,
-producing chunked 7D actions (delta_xyz, delta_axisangle, gripper).
+WMVLA extends SimVLA with learnable future tokens that participate in the
+action head's attention. At inference, the future tokens are present in the
+sequence but their outputs are discarded — only action predictions are used.
+
+Standalone server that inherits directly from PredictModelServer.
+Dependencies are installed via ``pip install git+...`` from the simvla package.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
-from pathlib import Path
-import shutil
 import subprocess
 import sys
-import tempfile
+from pathlib import Path
 from typing import Any
+import os
 
 import numpy as np
 
@@ -60,31 +68,32 @@ from vla_eval.types import Action, Observation
 
 logger = logging.getLogger(__name__)
 
-_DISABLED_STRINGS = {"", "none", "null"}
-_SIMVLA_REPO_URL = "https://github.com/LUOyk1999/SimVLA.git"
-_SIMVLA_REPO_REV = "32700d0ad8991996e123e4b685abe370ce6e9aab"
+_SIMVLA_PKG_URL = "git+https://github.com/SqueezeBits/simvla.git"
+_SIMVLA_PKG_REV = "ff06d626325292cd9682878e82124161c0c3af59"
 
+def _load_model_weights(model, checkpoint_path: str) -> None:
+    import safetensors.torch
+    import torch
+    safe = os.path.join(checkpoint_path, "model.safetensors")
+    if os.path.exists(safe):
+        state_dict = safetensors.torch.load_file(safe)
+    else:
+        state_dict = torch.load(
+            os.path.join(checkpoint_path, "pytorch_model.bin"), map_location="cpu",
+        )
+    state_dict = {k.replace("._orig_mod.", "."): v for k, v in state_dict.items()}
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        logger.info(f"Missing keys ({len(missing)}): {missing[:5]}...")
+    if unexpected:
+        logger.info(f"Unexpected keys ({len(unexpected)}): {unexpected[:5]}...")
 
-def _normalize_optional_str(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return None if value.strip().lower() in _DISABLED_STRINGS else value
+class SelfflowVLAModelServer(PredictModelServer):
+    """SelfflowVLA (Self-Flow VLA) model server.
 
-
-class SimVLAModelServer(PredictModelServer):
-    """SimVLA (SmolVLM-VLA) model server.
-
-    Loads a SmolVLM-VLA checkpoint and runs inference with two camera views
-    (primary image + wrist image), proprioceptive state, and a language
-    instruction.  Produces chunked 7D actions per step.
-
-    Args:
-        checkpoint: Path to SimVLA checkpoint directory.
-        norm_stats: Path to normalization statistics JSON file.
-        smolvlm_model: SmolVLM base model path or HuggingFace repo ID.
-        image_size: Input image resolution (square).
-        chunk_size: Number of actions per inference call.
-        action_ensemble: Strategy for blending overlapping action chunks.
+    Loads a SelfflowVLA checkpoint via the simvla package and runs
+    inference with two camera views (primary + wrist), proprioceptive
+    state, and a language instruction. Produces chunked 7D actions.
     """
 
     def __init__(
@@ -93,12 +102,10 @@ class SimVLAModelServer(PredictModelServer):
         *,
         norm_stats: str | None = None,
         norm_stats_subdir: str = "norm_stats",
-        norm_stats_filename: str = "libero_norms.json",
+        norm_stats_filename: str = "libero_norm.json",
         smolvlm_model: str = "HuggingFaceTB/SmolVLM-500M-Instruct",
-        reference_repo_dir: str | None = None,
-        repo_url: str = _SIMVLA_REPO_URL,
-        repo_rev: str = _SIMVLA_REPO_REV,
-        repo_cache_dir: str | None = None,
+        pkg_url: str = _SIMVLA_PKG_URL,
+        pkg_rev: str = _SIMVLA_PKG_REV,
         image_size: int = 384,
         chunk_size: int = 10,
         action_ensemble: str = "newest",
@@ -106,20 +113,17 @@ class SimVLAModelServer(PredictModelServer):
     ) -> None:
         super().__init__(chunk_size=chunk_size, action_ensemble=action_ensemble, **kwargs)
         self.checkpoint = checkpoint
-        self.norm_stats = _normalize_optional_str(norm_stats)
+        self.norm_stats = norm_stats
         self.norm_stats_subdir = norm_stats_subdir
         self.norm_stats_filename = norm_stats_filename
         self.smolvlm_model = smolvlm_model
-        self.reference_repo_dir = _normalize_optional_str(reference_repo_dir)
-        self.repo_url = repo_url
-        self.repo_rev = repo_rev
-        self.repo_cache_dir = _normalize_optional_str(repo_cache_dir)
+        self.pkg_url = pkg_url
+        self.pkg_rev = pkg_rev
         self.image_size = image_size
         self._model = None
         self._processor = None
         self._device = None
         self._transform = None
-        self._reference_repo_path: Path | None = None
 
     def get_action_spec(self) -> dict[str, DimSpec]:
         return {"position": POSITION_DELTA, "rotation": ROTATION_AA, "gripper": GRIPPER_CLOSE_POS}
@@ -130,87 +134,45 @@ class SimVLAModelServer(PredictModelServer):
     def get_observation_params(self) -> dict[str, Any]:
         return {"send_wrist_image": True, "send_state": True}
 
-    def _resolve_reference_repo(self) -> Path:
-        """Resolve the SimVLA reference repo, cloning from GitHub if needed."""
-        if self._reference_repo_path is not None:
-            return self._reference_repo_path
-
-        # 1. Explicit local path
-        if self.reference_repo_dir is not None:
-            path = Path(self.reference_repo_dir).expanduser().resolve()
-            if not path.exists():
-                raise FileNotFoundError(f"reference_repo_dir does not exist: {path}")
-            self._reference_repo_path = path
-            return path
-
-        # 2. Clone from GitHub into cache
-        git = shutil.which("git")
-        if git is None:
-            raise RuntimeError("git is required to fetch the SimVLA reference repo")
-
-        cache_root = Path(self.repo_cache_dir or "~/.cache/vla-eval/reference-repos").expanduser()
-        cache_root.mkdir(parents=True, exist_ok=True)
-        target = cache_root / f"simvla-{self.repo_rev[:12]}"
-        if target.exists():
-            self._reference_repo_path = target
-            return target
-
-        logger.info("Cloning SimVLA reference repo from %s (rev %s)...", self.repo_url, self.repo_rev[:12])
-        tmp_dir = Path(tempfile.mkdtemp(prefix="simvla-", dir=cache_root))
+    def _ensure_simvla_package(self) -> None:
+        """Install the simvla package if not already importable."""
         try:
-            subprocess.run([git, "init"], cwd=tmp_dir, check=True, capture_output=True, text=True)
-            subprocess.run(
-                [git, "remote", "add", "origin", self.repo_url], cwd=tmp_dir, check=True, capture_output=True
-            )
-            subprocess.run(
-                [git, "fetch", "--depth", "1", "origin", self.repo_rev],
-                cwd=tmp_dir,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run([git, "checkout", "FETCH_HEAD"], cwd=tmp_dir, check=True, capture_output=True, text=True)
-            try:
-                tmp_dir.rename(target)
-            except FileExistsError:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise
+            importlib.import_module("simvla")
+            return
+        except ModuleNotFoundError:
+            pass
 
-        self._reference_repo_path = target
-        return target
-
-    def _ensure_reference_imports(self) -> Path:
-        """Add SimVLA reference repo to sys.path and return the repo root."""
-        repo_root = self._resolve_reference_repo()
-        if not (repo_root / "models" / "modeling_smolvlm_vla.py").exists():
-            raise FileNotFoundError(f"SimVLA reference repo missing models/modeling_smolvlm_vla.py: {repo_root}")
-        repo_str = str(repo_root)
-        if repo_str not in sys.path:
-            sys.path.insert(0, repo_str)
-        return repo_root
+        install_spec = f"{self.pkg_url}@{self.pkg_rev}"
+        logger.info("Installing simvla package: pip install %s", install_spec)
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", install_spec],
+            stdout=subprocess.DEVNULL,
+        )
 
     def _resolve_norm_stats(self) -> Path | None:
         """Resolve normalization statistics file.
 
         Resolution order:
         1. Explicit ``norm_stats`` path (if provided and exists).
-        2. ``<reference_repo>/<norm_stats_subdir>/<norm_stats_filename>``
-           (auto-discovered from the cloned/local SimVLA repo).
+        2. Bundled norm stats from the installed simvla package.
         """
         # 1. Explicit path
         if self.norm_stats is not None:
             p = Path(self.norm_stats).expanduser().resolve()
             if p.is_file():
                 return p
-            logger.warning("Explicit norm_stats path does not exist: %s — trying reference repo", p)
+            logger.warning("Explicit norm_stats path does not exist: %s — trying package data", p)
 
-        # 2. Reference repo subdirectory
-        repo_root = self._resolve_reference_repo()
-        candidate = repo_root / self.norm_stats_subdir / self.norm_stats_filename
-        if candidate.is_file():
-            return candidate
+        # 2. Package data from installed simvla
+        try:
+            import importlib.resources as pkg_resources
+
+            ref = pkg_resources.files("simvla") / self.norm_stats_subdir / self.norm_stats_filename
+            with pkg_resources.as_file(ref) as pkg_path:
+                if pkg_path.is_file():
+                    return Path(pkg_path)
+        except Exception:
+            logger.debug("Could not resolve norm_stats from simvla package data", exc_info=True)
 
         return None
 
@@ -221,22 +183,58 @@ class SimVLAModelServer(PredictModelServer):
         import torch
         from torchvision import transforms
 
-        self._ensure_reference_imports()
+        self._ensure_simvla_package()
 
-        from models.modeling_smolvlm_vla import SmolVLMVLA
-        from models.configuration_smolvlm_vla import SmolVLMVLAConfig
-        from models.processing_smolvlm_vla import SmolVLMVLAProcessor
-        import safetensors.torch
-        import os
+        # simvla uses bare `@strict` on classes that aren't @dataclass and
+        # call `super().__post_init__(**kwargs)` expecting the parent
+        # (PretrainedConfig) to absorb leftover kwargs. huggingface_hub
+        # >=0.32 dropped both behaviors. Restore them here before importing.
+        import dataclasses as _dc
+        import huggingface_hub.dataclasses as _hh_dc
+        from transformers.configuration_utils import PretrainedConfig as _PC
+
+        if not hasattr(_PC, "__post_init__"):
+            def _pc_post_init(self, **kw):
+                _PC.__init__(self, **kw)
+            _PC.__post_init__ = _pc_post_init
+
+        _orig_strict = _hh_dc.strict
+
+        def _strict(cls=None, *, accept_kwargs=True, **kwargs):
+            def _apply(c):
+                if not _dc.is_dataclass(c):
+                    c = _dc.dataclass(c)
+                return _orig_strict(accept_kwargs=accept_kwargs, **kwargs)(c)
+            return _apply(cls) if cls is not None else _apply
+
+        _hh_dc.strict = _strict
+
+        # The file simvla.py in this directory shadows the installed simvla
+        # package.  Temporarily remove paths that contain it so Python finds
+        # the real package.
+        _hidden: list[tuple[int, str]] = []
+        for _i in range(len(sys.path) - 1, -1, -1):
+            _candidate = Path(sys.path[_i]) / "simvla.py"
+            if _candidate.is_file():
+                _hidden.append((_i, sys.path.pop(_i)))
+        # Invalidate any cached "simvla" module entry from the wrong location
+        if "simvla" in sys.modules:
+            del sys.modules["simvla"]
+        try:
+            from simvla.models.selfflow.configuration_selfflow import SelfFlowConfig
+            from simvla.models.selfflow.modeling_selfflow import SelfFlowVLA
+            from simvla.models.processing_smolvlm_vla import SmolVLMVLAProcessor
+        finally:
+            for _i, _p in _hidden:
+                sys.path.insert(_i, _p)
 
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info("Loading SimVLA from %s on %s", self.checkpoint, self._device)
-
-        config = SmolVLMVLAConfig.from_pretrained(self.checkpoint)
-        self._model = SmolVLMVLA(config)
-        state_dict = safetensors.torch.load_file(os.path.join(self.checkpoint, "model.safetensors"))
-        self._model.load_state_dict(state_dict)
-        self._model = self._model.to(self._device)
+        logger.info("Loading SelfflowVLA from %s on %s", self.checkpoint, self._device)
+        model_cfg = SelfFlowConfig.from_pretrained(self.checkpoint)
+        model = SelfFlowVLA(model_cfg)
+        _load_model_weights(model, self.checkpoint)
+        #model = SelfFlowVLA.from_pretrained(self.checkpoint)
+        self._model = model.to(self._device)
         self._model.eval()
 
         self._processor = SmolVLMVLAProcessor.from_pretrained(self.smolvlm_model)
@@ -256,7 +254,7 @@ class SimVLAModelServer(PredictModelServer):
             ]
         )
 
-        logger.info("SimVLA model loaded (image_size=%d, chunk_size=%s)", self.image_size, self.chunk_size)
+        logger.info("WMVLA model loaded (image_size=%d, chunk_size=%s)", self.image_size, self.chunk_size)
 
     def _preprocess_images(self, image0: np.ndarray, image1: np.ndarray) -> tuple[Any, Any]:
         """Preprocess two camera views into model input tensors."""
@@ -335,13 +333,14 @@ class SimVLAModelServer(PredictModelServer):
         lang = {k: v.to(self._device) for k, v in lang.items()}
 
         with torch.no_grad():
-            actions = self._model.generate_actions(
+            results = self._model.generate_actions(
                 input_ids=lang["input_ids"],
                 image_input=images_batch,
                 image_mask=masks_batch,
                 proprio=proprio_batch,
                 steps=self.chunk_size or 10,
             )
+            actions = results["action"]
 
         actions = actions.cpu().numpy()  # (B, chunk_size, 7)
         return [{"actions": actions[i]} for i in range(batch_size)]
@@ -350,4 +349,4 @@ class SimVLAModelServer(PredictModelServer):
 if __name__ == "__main__":
     from vla_eval.model_servers.serve import run_server
 
-    run_server(SimVLAModelServer)
+    run_server(SelfflowVLAModelServer)

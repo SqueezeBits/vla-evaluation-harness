@@ -73,11 +73,27 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
+# Extract --output-dir from EXTRA_ARGS so the default OUTPUT path and the
+# existing-shard check both honor it.
+output_dir_override=""
+next_is_output_dir=false
+for arg in "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"; do
+  if $next_is_output_dir; then
+    output_dir_override="$arg"
+    next_is_output_dir=false
+    continue
+  fi
+  case "$arg" in
+    --output-dir) next_is_output_dir=true ;;
+    --output-dir=*) output_dir_override="${arg#*=}" ;;
+  esac
+done
+
 # Derive output name from config filename if not specified
 if [[ -z "$OUTPUT" ]]; then
   config_name="$(basename "$CONFIG" .yaml)"
   config_name="$(basename "$config_name" .yml)"
-  OUTPUT="results/${config_name}.json"
+  OUTPUT="${output_dir_override:-results}/${config_name}.json"
 fi
 
 cleanup() {
@@ -168,7 +184,7 @@ echo "Launching ${NUM_SHARDS} shards..."
 
 pids=()
 for i in $(seq 0 $((NUM_SHARDS - 1))); do
-  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" ${RUN_EXTRA[@]+"${RUN_EXTRA[@]}"} &
+  vla-eval run -c "$CONFIG" --shard-id "$i" --num-shards "$NUM_SHARDS" ${RUN_EXTRA[@]+"${RUN_EXTRA[@]}"} ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} &
   pids+=($!)
 done
 
@@ -186,17 +202,24 @@ if [[ "$failed" -gt 0 ]]; then
 fi
 
 # Fix ownership of Docker-created results (containers run as root).
-if [[ -d "results" ]]; then
-  vla-eval fix-perms results
+# Skip when --no-docker: shards ran on host, files already owned by user.
+results_dir="${output_dir_override:-results}"
+if [[ "$NO_DOCKER" != 1 && -d "$results_dir" ]]; then
+  vla-eval fix-perms "$results_dir"
+fi
+
+merge_extra=()
+if [[ -n "$output_dir_override" ]]; then
+  merge_extra+=(--output-dir "$output_dir_override")
 fi
 
 echo "Merging results..."
 if $has_save_traj; then
-  vla-eval merge -c "$CONFIG" --traj-name "$traj_name" -o "$OUTPUT"
+  vla-eval merge -c "$CONFIG" --traj-name "$traj_name" -o "$OUTPUT" ${merge_extra[@]+"${merge_extra[@]}"}
   echo "Merging trajectory shards..."
-  vla-eval merge-traj -c "$CONFIG" --traj-name "$traj_name"
+  vla-eval merge-traj -c "$CONFIG" --traj-name "$traj_name" ${merge_extra[@]+"${merge_extra[@]}"}
 else
-  vla-eval merge -c "$CONFIG" -o "$OUTPUT"
+  vla-eval merge -c "$CONFIG" -o "$OUTPUT" ${merge_extra[@]+"${merge_extra[@]}"}
 fi
 
 echo "Done. Results saved to $OUTPUT"

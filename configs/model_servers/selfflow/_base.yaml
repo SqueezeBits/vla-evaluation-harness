@@ -1,0 +1,13 @@
+# SelfflowVLA model server — shared base
+#
+# Self-Flow VLA with future tokens.
+# Extends SimVLA; installs the simvla package via pip instead of cloning.
+
+script: "src/vla_eval/model_servers/selfflow.py"
+args:
+  smolvlm_model: HuggingFaceTB/SmolVLM-500M-Instruct
+  pkg_url: "git+https://github.com/SqueezeBits/simvla.git"
+  pkg_rev: ff06d626325292cd9682878e82124161c0c3af59
+  image_size: 384
+  chunk_size: 10
+  port: 8000

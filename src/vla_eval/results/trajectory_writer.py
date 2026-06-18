@@ -27,6 +27,8 @@ from typing import Any
 
 import numpy as np
 
+from vla_eval.image_utils import hconcat_uint8
+
 logger = logging.getLogger(__name__)
 
 _CODEBASE_VERSION = "v2.1"
@@ -159,6 +161,12 @@ class TrajectoryWriter:
     state_key:
         Key in the observation dict for the proprioceptive state vector.
         Defaults to ``"states"``; also checks ``"state"`` as fallback.
+    combine_observation_cameras:
+        If ``True`` (default), all benchmark observation cameras are concatenated
+        left-to-right into one ``combined_camera_name`` video instead of one
+        video per camera. Model-emitted ``extra_images`` are unaffected.
+    combined_camera_name:
+        Name of the merged stream when ``combine_observation_cameras`` is set.
     """
 
     def __init__(
@@ -171,6 +179,8 @@ class TrajectoryWriter:
         image_keys: list[str] | None = None,
         state_key: str = "states",
         split: str = "eval",
+        combine_observation_cameras: bool = True,
+        combined_camera_name: str = "cameras",
     ) -> None:
         self._root = Path(output_dir)
         self._fps = fps
@@ -181,6 +191,12 @@ class TrajectoryWriter:
         self._image_keys = image_keys
         self._state_key = state_key
         self._split = split
+        # When True, all benchmark observation cameras (agentview, wrist, ...) are
+        # stitched left-to-right into a single ``combined_camera_name`` video
+        # stream instead of one video per camera. Model-emitted extra_images
+        # (predicted_flow, model_input, ...) are unaffected and stay separate.
+        self._combine_observation_cameras = combine_observation_cameras
+        self._combined_camera_name = combined_camera_name
 
         self._root.mkdir(parents=True, exist_ok=True)
 
@@ -244,16 +260,33 @@ class TrajectoryWriter:
             Dict with ``"images"`` (dict of camera_name → uint8 HWC array),
             optional state vector under the configured ``state_key``.
         action:
-            Dict with ``"actions"`` key containing the action vector.
+            Dict with ``"actions"`` key containing the action vector. May also
+            carry ``"extra_images"`` (dict of name → uint8 HWC array), e.g. a
+            model-generated optical-flow visualization, which is recorded as an
+            additional video stream alongside the camera views.
         """
         buf = self._current
         if buf is None:
             raise RuntimeError("No active episode. Call start_episode() first.")
 
         # --- Images ---
-        images = observation.get("images", {})
+        # Benchmark observation cameras and model-emitted derived streams (e.g.
+        # predicted optical flow, under action["extra_images"]) are recorded as
+        # LeRobot video keys. The image_keys allow-list (if set) filters both by
+        # their original name.
+        obs_images = observation.get("images", {})
+        extra_images = action.get("extra_images") or {}
         if self._image_keys is not None:
-            images = {k: images[k] for k in self._image_keys if k in images}
+            obs_images = {k: v for k, v in obs_images.items() if k in self._image_keys}
+            extra_images = {k: v for k, v in extra_images.items() if k in self._image_keys}
+
+        # Optionally stitch all observation cameras into a single combined stream,
+        # leaving the model-emitted extra streams as their own videos.
+        if self._combine_observation_cameras and len(obs_images) > 1:
+            combined = hconcat_uint8([np.asarray(v, dtype=np.uint8) for v in obs_images.values()])
+            obs_images = {self._combined_camera_name: combined}
+
+        images = {**obs_images, **extra_images}
 
         for cam_name, frame in images.items():
             if cam_name not in buf.image_buffers:

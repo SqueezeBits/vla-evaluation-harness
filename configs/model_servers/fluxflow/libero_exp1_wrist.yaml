@@ -1,0 +1,35 @@
+# FluxFlow LIBERO rollout — wrist EVERYWHERE: the wrist camera conditions BOTH
+# Flux2 (the flow generator) and the IDM (the action decoder).
+#
+#   - IDM (junhalee/idm-source_wrist_flow-bs512): input_mode=source_wrist_flow,
+#     so it consumes agentview + WRIST cam + generated flow. The server reads
+#     input_mode from config.json and feeds the wrist to the IDM automatically.
+#   - Flux2 (junhalee/flux2-flow-rgb-wrist-lora-512-bs32x4): trained with
+#     --use_wrist_ref, so the wrist is an extra Flux reference (Image 3, after
+#     source=1 and past-flow=2) and the prompt's {wrist_clause} is filled.
+#     use_wrist_ref: true turns that on; prompt_template: v3_uv matches the LoRA's
+#     caption framing (overrides the baseline's prompted_v2).
+#
+# Inherits the uv-flow / past-flow=gt recipe, execute_size, overlays, and
+# append_progress from the baseline.
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_exp1_wrist.yaml
+
+extends: libero.yaml
+args:
+  # IDM checkpoint — a HF Hub repo id (resolved by IDM.from_pretrained) or a
+  # local step-<N> dir from train_idm.py. config.json reports
+  # input_mode=source_wrist_flow, num_actions=8.
+  idm_dir: junhalee/idm-source_wrist_flow-bs512-it50K
+
+  # Wrist-trained uv Flux LoRA: pytorch_lora_weights.safetensors, auto-detected
+  # and fused by flux_mode=auto (inherited).
+  flux_ckpt: junhalee/flux2-flow-rgb-wrist-lora-512-bs32x4
+  # Feed the wrist to Flux2 (Image 3) and fill the prompt's {wrist_clause}.
+  use_wrist_ref: true
+  # The wrist LoRA's caption framing (BFL-guide v3 + uv colormap + <robot_flow>),
+  # overriding the baseline's v2. flow_repr stays uv (inherited).
+  prompt_template: v3_uv
+
+  # num_actions (8), flow_repr (uv), append_progress (true) are read from the IDM
+  # config.json / inherited, so they need not be repeated.

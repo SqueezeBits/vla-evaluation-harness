@@ -123,6 +123,9 @@ class TrajectoryConfig:
         image_keys: Camera names to record.  ``None`` records all cameras.
         chunks_size: Number of episodes per chunk directory.
         split: Dataset split name (e.g. ``"eval"``, ``"train"``).
+        combine_observation_cameras: Concatenate all observation cameras into a
+            single video stream instead of one per camera (default: on).
+        combined_camera_name: Stream name used when combining observation cameras.
     """
 
     enabled: bool = False
@@ -134,6 +137,8 @@ class TrajectoryConfig:
     image_keys: list[str] | None = None
     chunks_size: int = 1000
     split: str = "eval"
+    combine_observation_cameras: bool = True
+    combined_camera_name: str = "cameras"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> TrajectoryConfig:
@@ -149,6 +154,8 @@ class TrajectoryConfig:
             image_keys=data.get("image_keys"),
             chunks_size=int(data.get("chunks_size", cls.chunks_size)),
             split=data.get("split", cls.split),
+            combine_observation_cameras=data.get("combine_observation_cameras", cls.combine_observation_cameras),
+            combined_camera_name=data.get("combined_camera_name", cls.combined_camera_name),
         )
 
     def to_dict(self) -> dict[str, Any]:

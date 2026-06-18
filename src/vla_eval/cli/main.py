@@ -416,6 +416,9 @@ def cmd_run(args: argparse.Namespace) -> None:
     # CLI override: enable trajectory recording
     if getattr(args, "save_traj", False):
         config.setdefault("trajectory", {})["enabled"] = True
+    cli_combine_obs = getattr(args, "combine_obs_cameras", None)
+    if cli_combine_obs is not None:
+        config.setdefault("trajectory", {})["combine_observation_cameras"] = cli_combine_obs
     cli_traj_name = getattr(args, "traj_name", None)
     if cli_traj_name is not None:
         config.setdefault("trajectory", {})["traj_name"] = cli_traj_name
@@ -552,7 +555,12 @@ def cmd_server_info(args: argparse.Namespace) -> None:
         print(json.dumps(info, indent=2, default=str))
 
 
-def _discover_shard_groups(config_path: str, *, traj_name: str | None = None) -> dict[str, list[Path]]:
+def _discover_shard_groups(
+    config_path: str,
+    *,
+    traj_name: str | None = None,
+    output_dir_override: str | None = None,
+) -> dict[str, list[Path]]:
     """Auto-discover shard files from a config YAML, grouped by benchmark name.
 
     Searches both the top-level ``output_dir`` and trajectory subdirectories
@@ -565,7 +573,7 @@ def _discover_shard_groups(config_path: str, *, traj_name: str | None = None) ->
     from vla_eval.config import EvalConfig
 
     config = _load_config(config_path)
-    output_dir = Path(config.get("output_dir", "./results"))
+    output_dir = Path(output_dir_override or config.get("output_dir", "./results"))
     cfg_traj_name = traj_name or config.get("trajectory", {}).get("traj_name")
 
     groups: dict[str, list[Path]] = {}
@@ -610,13 +618,16 @@ def cmd_merge(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if args.clean and not args.output:
-        _stderr_console().print("[red]ERROR: --clean requires --output (refusing to delete shards without saving)[/red]")
+        _stderr_console().print(
+            "[red]ERROR: --clean requires --output (refusing to delete shards without saving)[/red]"
+        )
         sys.exit(1)
 
     # When --config is given, merge each sub-benchmark separately.
     if args.config:
         cli_traj_name = getattr(args, "traj_name", None)
-        groups = _discover_shard_groups(args.config, traj_name=cli_traj_name)
+        cli_output_dir = getattr(args, "output_dir", None)
+        groups = _discover_shard_groups(args.config, traj_name=cli_traj_name, output_dir_override=cli_output_dir)
         # Also include any explicitly passed files as an extra group
         if args.files:
             extra: list[Path] = []
@@ -706,7 +717,8 @@ def cmd_merge_traj(args: argparse.Namespace) -> None:
         from vla_eval.cli.config_loader import load_config
 
         config = load_config(args.config)
-        output_dir = Path(config.get("output_dir", "./results"))
+        cli_output_dir = getattr(args, "output_dir", None)
+        output_dir = Path(cli_output_dir or config.get("output_dir", "./results"))
         traj_cfg = config.get("trajectory", {})
         traj_name = getattr(args, "traj_name", None) or traj_cfg.get("traj_name")
         if not traj_name:
@@ -1071,13 +1083,29 @@ execution flow:
     run_parser.add_argument(
         "--save-traj", action="store_true", help="Record trajectories in LeRobot format (overrides config)"
     )
+    # Shared dest, default None so the config decides unless explicitly overridden.
+    # Two flags instead of argparse.BooleanOptionalAction (Python <3.9 compat).
+    run_parser.add_argument(
+        "--combine-obs-cameras",
+        dest="combine_obs_cameras",
+        action="store_true",
+        default=None,
+        help="Record all observation cameras as one combined video (e.g. agentview+wrist side by side). "
+        "On by default; use --no-combine-obs-cameras for one video per camera.",
+    )
+    run_parser.add_argument(
+        "--no-combine-obs-cameras",
+        dest="combine_obs_cameras",
+        action="store_false",
+        default=None,
+        help="Record each observation camera as its own video (disable combining).",
+    )
     run_parser.add_argument(
         "--traj-name",
         default=None,
         help="Trajectory subdirectory name (e.g. 'MyModel_20260328_120000'). "
         "Shared across shards for consistent output paths.",
     )
-    run_parser.add_argument("--output-dir", "-o", default=None, help="Override output_dir from config")
     run_parser.add_argument("--verbose", "-v", action="store_true")
     run_parser.set_defaults(func=cmd_run)
 
@@ -1155,6 +1183,11 @@ examples:
     merge_parser.add_argument(
         "--config", "-c", default=None, help="Config YAML — auto-discover shard files from output_dir"
     )
+    merge_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Override output_dir from config when auto-discovering shards (matches 'vla-eval run --output-dir')",
+    )
     merge_parser.add_argument("--output", "-o", default=None, help="Output path for merged JSON (default: stdout)")
     merge_parser.add_argument(
         "--traj-name", default=None, help="Trajectory subdirectory name (to find co-located shard results)"
@@ -1186,6 +1219,11 @@ examples:
     merge_traj_parser.add_argument("dirs", nargs="*", help="Trajectory root directories containing _shard* subdirs")
     merge_traj_parser.add_argument(
         "--config", "-c", default=None, help="Config YAML — auto-discover trajectory dirs from output_dir"
+    )
+    merge_traj_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Override output_dir from config when auto-discovering trajectory dirs",
     )
     merge_traj_parser.add_argument(
         "--traj-name", default=None, help="Trajectory subdirectory name (overrides config value)"

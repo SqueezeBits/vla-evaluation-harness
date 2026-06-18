@@ -99,6 +99,16 @@ class PredictModelServer(ModelServer):
         - ``"ema"``: exponential moving average (controlled by ``ema_alpha``).
         - A callable ``(old, new) -> blended`` for custom logic.
 
+    Overlapping replan (``execute_size``):
+        By default a chunk is fully drained before the next ``predict()`` runs,
+        so chunks never overlap and ``action_ensemble`` is a no-op.  Set
+        ``execute_size = k`` to execute only *k* actions of each chunk, then
+        replan: the new chunk's first ``chunk_size - k`` actions overlap the
+        leftovers and are blended by ``action_ensemble`` (temporally aligned —
+        both predictions target the same absolute timestep).  ``execute_size =
+        chunk_size`` (or ``None``) is the historical drain-fully behavior;
+        ``execute_size = 1`` replans every step (a streaming temporal ensemble).
+
     The chunk buffer is **deleted** on each ``episode_start``, allowing
     ``chunk_size`` to change between episodes (see CogACT's ``chunk_size_map``).
 
@@ -118,6 +128,10 @@ class PredictModelServer(ModelServer):
     Args:
         chunk_size: Number of actions per inference call (default None = no
             chunking or trimming; the model's raw output is used as-is).
+        execute_size: Actions to execute per chunk before replanning (default
+            None = drain the full chunk, no overlap).  ``k < chunk_size`` makes
+            chunks overlap by ``chunk_size - k`` and blend via ``action_ensemble``;
+            ``1`` replans every step.  Ignored when ``chunk_size`` is None.
         action_ensemble: Strategy for blending overlapping action chunks.
         ema_alpha: Blend ratio for "ema" ensemble (higher = more weight on new).
         max_batch_size: Maximum observations per batch (default 1 = no batching).
@@ -134,6 +148,7 @@ class PredictModelServer(ModelServer):
         *,
         model_name: str | None = None,
         chunk_size: int | None = None,
+        execute_size: int | None = None,
         action_ensemble: str | Callable[[np.ndarray, np.ndarray], np.ndarray] = "newest",
         ema_alpha: float = 0.5,
         max_batch_size: int = 1,
@@ -142,8 +157,11 @@ class PredictModelServer(ModelServer):
         laas: bool = False,
         hz: float = 10.0,
     ) -> None:
+        if execute_size is not None and execute_size < 1:
+            raise ValueError(f"execute_size must be >= 1, got {execute_size}")
         self._model_name_override = model_name
         self.chunk_size = chunk_size
+        self.execute_size = execute_size
         self.action_ensemble = action_ensemble
         self.ema_alpha = ema_alpha
         self.max_batch_size = max_batch_size
@@ -154,6 +172,11 @@ class PredictModelServer(ModelServer):
 
         self._chunk_buffers: dict[str, ActionChunkBuffer] = {}
         self._session_chunk_sizes: dict[str, int] = {}
+        # Per-session "extras": any non-``actions`` keys a chunk's predict()
+        # returned (e.g. a visualization image).  Cached so every buffered
+        # sub-step of that chunk re-emits them, keeping extras aligned 1:1 with
+        # the actions the benchmark records.  Cleared each episode.
+        self._latest_extras: dict[str, dict[str, Any]] = {}
         # Serialise predict() calls so only one runs on the GPU at a time.
         # The batched path (_dispatch_loop) is already single-threaded; this
         # lock protects the non-batched and CI paths.
@@ -211,8 +234,24 @@ class PredictModelServer(ModelServer):
         """Return the effective chunk_size for a session."""
         return self._session_chunk_sizes.get(ctx.session_id, self.chunk_size)
 
+    def _overlap_keep(self, cs: int) -> int:
+        """Buffer length at/below which we force a replan.
+
+        ``execute_size`` actions run per chunk, so we keep ``cs - execute_size``
+        leftovers in the buffer to overlap (and blend with) the next chunk.
+        ``None`` / ``>= cs`` => keep 0, i.e. drain fully (no overlap).
+        """
+        if self.execute_size is None:
+            return 0
+        return max(0, cs - self.execute_size)
+
     def _try_serve_from_buffer(self, ctx: SessionContext) -> np.ndarray | None:
-        """Return a buffered action if available, else ``None``."""
+        """Return a buffered action if available, else ``None`` to force a replan.
+
+        With ``execute_size`` set we stop serving once only the overlap window
+        remains, so ``predict()`` runs again and ``push_chunk`` blends the new
+        chunk against those leftovers.
+        """
         cs = self._get_chunk_size(ctx)
         if cs is None:
             return None
@@ -221,7 +260,7 @@ class PredictModelServer(ModelServer):
             ensemble_fn = get_ensemble_fn(self.action_ensemble, self.ema_alpha)
             self._chunk_buffers[sid] = ActionChunkBuffer(cs, ensemble_fn)
         buf = self._chunk_buffers[sid]
-        if not buf.empty:
+        if len(buf) > self._overlap_keep(cs):
             return buf.pop()
         return None
 
@@ -235,6 +274,14 @@ class PredictModelServer(ModelServer):
         if cs is not None and actions.ndim == 2:
             actions = actions[:cs]
         return {**result, "actions": actions}
+
+    @staticmethod
+    def _split_extras(result: dict[str, Any]) -> dict[str, Any]:
+        """Return every key of an inference result except ``actions``.
+
+        These ride along with each emitted action (see ``_latest_extras``).
+        """
+        return {k: v for k, v in result.items() if k != "actions"}
 
     async def _process_and_send(self, result: dict[str, Any], ctx: SessionContext) -> None:
         """Post-process inference result (chunking) and send action."""
@@ -251,12 +298,19 @@ class PredictModelServer(ModelServer):
             await ctx.send_action(result)
             return
 
+        # Cache this chunk's extras so the buffered sub-steps re-emit them.
+        extras = self._split_extras(result)
+        if extras:
+            self._latest_extras[ctx.session_id] = extras
+        else:
+            self._latest_extras.pop(ctx.session_id, None)
+
         # Push chunk and pop first action
         buf = self._chunk_buffers[ctx.session_id]
         buf.push_chunk(actions)
         action = buf.pop()
         if action is not None:
-            await ctx.send_action({"actions": action})
+            await ctx.send_action({"actions": action, **extras})
 
     # ------------------------------------------------------------------
     # on_observation: CI vs single vs batch dispatch
@@ -284,7 +338,8 @@ class PredictModelServer(ModelServer):
         # Serve from chunk buffer if available (skip inference)
         buffered = self._try_serve_from_buffer(ctx)
         if buffered is not None:
-            await ctx.send_action({"actions": buffered})
+            extras = self._latest_extras.get(ctx.session_id, {})
+            await ctx.send_action({"actions": buffered, **extras})
             return
 
         t0 = time.monotonic()
@@ -460,7 +515,8 @@ class PredictModelServer(ModelServer):
                     continue
 
                 action = self._pick_action(actions, obs_time)
-                await ctx.send_action({"actions": action})
+                # CI runs predict() every step, so extras are always fresh.
+                await ctx.send_action({"actions": action, **self._split_extras(result)})
             except Exception:
                 logger.exception("CI send_action error session=%s", session_id)
                 break
@@ -505,6 +561,7 @@ class PredictModelServer(ModelServer):
         """
         sid = ctx.session_id
         self._chunk_buffers.pop(sid, None)
+        self._latest_extras.pop(sid, None)
 
         if self.continuous_inference:
             await self._stop_ci(sid)
@@ -518,6 +575,7 @@ class PredictModelServer(ModelServer):
         sid = ctx.session_id
         self._chunk_buffers.pop(sid, None)
         self._session_chunk_sizes.pop(sid, None)
+        self._latest_extras.pop(sid, None)
 
         if self.continuous_inference:
             await self._stop_ci(sid)

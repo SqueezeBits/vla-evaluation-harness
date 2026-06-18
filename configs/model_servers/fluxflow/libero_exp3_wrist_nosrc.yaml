@@ -1,0 +1,25 @@
+# FluxFlow LIBERO rollout — exp3: WRIST IDM input, NO source (wrist + flow).
+#
+# IDM trained with fluxflow configs/idm_exp3_wrist_nosrc.yaml: input_mode
+# wrist_flow — the IDM consumes the current WRIST-cam frame + the generated flow
+# (+ proprio), with the agentview RGB ("source") dropped from its model input.
+# The server reads input_mode from config.json, sees a wrist input mode, and
+# automatically requests the LIBERO wrist camera and feeds it to the IDM.
+#
+# This is wrist-to-the-IDM only. It is INDEPENDENT of Flux2 wrist conditioning:
+# use_wrist_ref stays false (inherited), so Flux2 generates flow from the
+# baseline non-wrist recipe (flux_ckpt + prompt_template v2 + past_flow=gt +
+# flow_repr uv), all inherited from libero.yaml. Use libero_exp1_wrist.yaml
+# instead if the wrist should ALSO condition the flow generator.
+#
+#   vla-eval serve --config configs/model_servers/fluxflow/libero_exp3_wrist_nosrc.yaml
+#
+# Only idm_dir differs from the baseline — the wrist camera is wired up purely
+# from the IDM's auto-detected input_mode. No depth, no DA3 extractor needed.
+
+extends: libero.yaml
+args:
+  # MUST be the IDM trained from idm_exp3_wrist_nosrc.yaml (input_mode
+  # wrist_flow). The wrist camera request + IDM wrist feed turn on automatically
+  # when config.json input_mode is wrist_flow or source_wrist_flow.
+  idm_dir: junhalee/idm-wrist_flow-bs512 # TODO: set to the real exp3 IDM checkpoint (local step-N dir or Hub id)

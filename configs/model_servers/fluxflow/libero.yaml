@@ -1,0 +1,77 @@
+# FluxFlow (Flux2 optical-flow generator + IDM action decoder) — LIBERO rollout
+#
+# Single-file uv-script model server (src/vla_eval/model_servers/fluxflow.py).
+# Its inline deps pull the local fluxflow repo ([tool.uv.sources] path) +
+# vla-eval, so `vla-eval serve` builds the env automatically.
+#
+#   # Terminal 1 — model server (GPU host)
+#   vla-eval serve --config configs/model_servers/fluxflow/libero.yaml
+#
+#   # Terminal 2 — benchmark (Docker by default)
+#   vla-eval run --config configs/libero_spatial.yaml
+#
+# Edit idm_dir to your IDM checkpoint. flux_ckpt may be a local LoRA/full-ft dir
+# OR a HF Hub repo id; the base weights load from base_model and the LoRA is
+# detected + fused in (flux_mode=auto), exactly as eval_policy.py does.
+
+# This is the ORIGINAL no-wrist baseline (single agentview + past-flow). For the
+# wrist-camera variant use libero_wrist.yaml, which extends this file and only
+# flips on use_wrist_ref + the wrist-trained flux_ckpt + the v3_uv template.
+
+script: "src/vla_eval/model_servers/fluxflow.py"
+args:
+  idm_dir: /workspace/code/fluxflow/runs_idm/20260522-010017-idm-dinov3-vits16-pretrain-lvd1689m-source_flow-bs128-lr1e-03-cosine-frozen-512px/step-196000/
+  flux_ckpt: junhalee/flux2-flow-rgb-lora-512-bs32x8
+  base_model: black-forest-labs/FLUX.2-klein-base-4B
+  flux_mode: auto             # auto-detects this repo as LoRA; or set 'lora' explicitly
+  num_inference_steps: 50
+  # Overlapping replan / temporal ensemble. The IDM predicts an 8-action chunk;
+  # execute_size = how many to run before re-predicting. With execute_size < 8 the
+  # next chunk's first (8 - execute_size) actions overlap the leftovers and are
+  # blended by action_ensemble (temporally aligned). execute_size: 4 => overlap
+  # window 4; execute_size: 1 => replan every step. Omit (or set = 8) to drain the
+  # full chunk with no overlap (the original behavior).
+  # NOTE: replanning more often than every 8 steps shrinks the past-flow interval
+  # (gt flow now spans `execute_size` steps, not the 8 the Flux LoRA trained on) —
+  # a conditioning distribution shift worth checking before trusting the scores.
+  execute_size: 4
+  action_ensemble: average    # newest | average | ema (newest = replan-only, no blending)
+  # Path-B conditioning recipe (must match the Flux LoRA's training recipe):
+  past_flow: true
+  past_flow_source: gt        # gt = cache prev obs -> real RAFT flow; pred = feed back generated flow
+  flow_model: raft
+  flow_repr: uv
+  flow_sigma: 0.15
+  # Prompt template the Flux LoRA trained on. This baseline LoRA trained on the
+  # prompted_v2 template, so pin it explicitly (the server default is now v3_uv).
+  # Accepts a preset alias (v2 | v3_uv | v3_videojam) or a literal format string.
+  prompt_template: v2
+  # NOTE: this baseline has no wrist conditioning — use_wrist_ref is left at its
+  # default (false). See libero_wrist.yaml for the wrist variant.
+  # append_progress: append ". The task is N% complete." to the prompt. When on,
+  # N = step / (suite max steps - 1), with the suite's max steps auto-resolved from
+  # the benchmark's MAX_STEP_MAPPING (override per-session via rollout_max_steps).
+  append_progress: true
+  # Attach the Flux2-generated flow image to each action response so the harness
+  # records it as a `predicted_flow` video stream under --save-traj (view it next
+  # to the rollout). Set false for max-throughput eval where you don't need it.
+  emit_flow: true
+  # Burn the templated prompt (instruction + progress) into the predicted_flow
+  # video for debugging. Only affects the recorded visualization, never the flow
+  # used for conditioning or the actions. No-op when emit_flow is false.
+  overlay_prompt: true
+  # Draw flow-direction arrows on the predicted_flow video: decode the RGB flow
+  # back to (u, v) pixel displacements and quiver-plot them on a grid. Like
+  # overlay_prompt, this only touches the recorded visualization. No-op when
+  # emit_flow is false.
+  overlay_arrows: true
+  arrow_grid: 20          # ~arrows along the short edge
+  arrow_scale: 1.0        # stretch factor on the drawn arrow length
+  arrow_min_frac: 0.01    # hide arrows shorter than this fraction of the image diagonal
+  # Also record the model's INPUTS as extra video streams: the preprocessed
+  # observation actually fed to the model (model_input) and the past-flow
+  # reference used for conditioning (past_flow; whiteout on the first replan,
+  # omitted entirely when past_flow is false). Recorded raw, no overlays. No-op
+  # for throughput-only runs — set false to skip.
+  emit_inputs: true
+  port: 8000

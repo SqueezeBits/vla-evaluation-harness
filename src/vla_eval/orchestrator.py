@@ -252,6 +252,8 @@ class Orchestrator:
                 robot_type=self._traj_cfg.robot_type,
                 image_keys=self._traj_cfg.image_keys,
                 split=self._traj_cfg.split,
+                combine_observation_cameras=self._traj_cfg.combine_observation_cameras,
+                combined_camera_name=self._traj_cfg.combined_camera_name,
             )
             logger.info("Trajectory recording enabled → %s", traj_dir)
 
